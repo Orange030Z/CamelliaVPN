@@ -4,11 +4,10 @@ import android.widget.Toast
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
@@ -30,7 +29,6 @@ import xyz.a202132.app.ui.dialogs.*
 import xyz.a202132.app.ui.dialogs.AutoTestDetailDialog
 import xyz.a202132.app.ui.dialogs.AutoTestResultDialog
 import xyz.a202132.app.ui.dialogs.SpeedTestDialog
-import xyz.a202132.app.ui.dialogs.UnlockTestDialog
 import xyz.a202132.app.ui.theme.*
 import xyz.a202132.app.viewmodel.AutoTestStage
 import xyz.a202132.app.viewmodel.BestNodePriority
@@ -39,12 +37,16 @@ import xyz.a202132.app.viewmodel.StartupDefaultTestMode
 import xyz.a202132.app.viewmodel.TestPreferMode
 import xyz.a202132.app.viewmodel.UnlockPriorityMode
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel = viewModel(),
     onStartVpn: (action: () -> Unit) -> Unit,
-    onOpenPerAppProxy: () -> Unit = {}
+    onOpenPerAppProxy: () -> Unit = {},
+    onOpenNodeList: () -> Unit = {},
+    onOpenNetworkToolbox: () -> Unit = {},
+    onOpenUnlockTest: () -> Unit = {},
+    onOpenOtherConfig: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -58,7 +60,6 @@ fun MainScreen(
     val vpnState by viewModel.vpnState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isTesting by viewModel.isTesting.collectAsState()
-    val showNodeList by viewModel.showNodeList.collectAsState()
     val testingLabel by viewModel.testingLabel.collectAsState()
     val filterUnavailable by viewModel.filterUnavailable.collectAsState()
     val notice by viewModel.notice.collectAsState()
@@ -72,18 +73,13 @@ fun MainScreen(
     
     // UI状态
     var showSpeedTestDialog by remember { mutableStateOf(false) }
-    var showUnlockTestDialog by remember { mutableStateOf(false) }
-    var showNetworkToolboxDialog by remember { mutableStateOf(false) }
     var showNodeIpInfoDialog by remember { mutableStateOf(false) }
-    var showNodeIpInfoActionDialog by remember { mutableStateOf(false) }
     var nodeForIpInfo by remember { mutableStateOf<Node?>(null) }
     var showAutoTestResultDialog by remember { mutableStateOf(false) }
     var nodeAutoTestDetail by remember { mutableStateOf<Node?>(null) }
     var autoTestWasRunning by remember { mutableStateOf(false) }
     var showQuickModePicker by remember { mutableStateOf(false) }
     var showTestPreferPanelPage by remember { mutableStateOf(false) }
-    var showTcpingActionDialog by remember { mutableStateOf(false) }
-    var showUrlTestActionDialog by remember { mutableStateOf(false) }
     
     // 流量统计
     val uploadSpeed by viewModel.uploadSpeed.collectAsState()
@@ -122,6 +118,7 @@ fun MainScreen(
     val preferTestModes by viewModel.preferTestModes.collectAsState()
     val preferTestSelectedModeId by viewModel.preferTestSelectedModeId.collectAsState()
     val nodeIpInfoTestOnVpnStart by viewModel.nodeIpInfoTestOnVpnStart.collectAsState()
+    val speedTestDownloadTimeoutMs by viewModel.speedTestDownloadTimeoutMs.collectAsState()
     // val showBackupFailedDialog by viewModel.showBackupFailedDialog.collectAsState() // Removed
     
     // 显示错误Toast
@@ -173,6 +170,7 @@ fun MainScreen(
                 DrawerContent(
                     onCheckUpdate = { viewModel.checkUpdate() },
                     onOpenPerAppProxy = onOpenPerAppProxy,
+                    onOpenOtherConfig = onOpenOtherConfig,
                     onOpenTestPreferPanel = { showTestPreferPanelPage = true },
                     bypassLan = bypassLan,
                     onToggleBypassLan = { viewModel.setBypassLan(it) },
@@ -231,8 +229,11 @@ fun MainScreen(
         gesturesEnabled = drawerState.isOpen
     ) {
         Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                     title = {
                         Text(
                             text = "流萤加速器",
@@ -269,28 +270,38 @@ fun MainScreen(
                                     text = { Text("\uD83D\uDD0C TCPing") },
                                     onClick = {
                                         showToolsMenu = false
-                                        showTcpingActionDialog = true
+                                        if (viewModel.showNodeListForTest("tcping")) {
+                                            onOpenNodeList()
+                                        }
                                     }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("\uD83C\uDF10 URL Test") },
                                     onClick = {
                                         showToolsMenu = false
-                                        showUrlTestActionDialog = true
+                                        if (viewModel.showNodeListForTest("urltest")) {
+                                            onOpenNodeList()
+                                        }
                                     }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("\uD83D\uDCE1 节点IP信息") },
                                     onClick = {
                                         showToolsMenu = false
-                                        showNodeIpInfoActionDialog = true
+                                        val selectedNode = currentNode
+                                        if (selectedNode == null) {
+                                            Toast.makeText(context, "请先选择节点", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            nodeForIpInfo = selectedNode
+                                            showNodeIpInfoDialog = true
+                                        }
                                     }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("\uD83E\uDDF0 网络工具箱") },
                                     onClick = {
                                         showToolsMenu = false
-                                        showNetworkToolboxDialog = true
+                                        onOpenNetworkToolbox()
                                     }
                                 )
                                 DropdownMenuItem(
@@ -304,7 +315,7 @@ fun MainScreen(
                                     text = { Text("\uD83C\uDFAC 流媒体解锁测试") },
                                     onClick = {
                                         showToolsMenu = false
-                                        showUnlockTestDialog = true
+                                        onOpenUnlockTest()
                                     }
                                 )
 
@@ -333,6 +344,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
+                    .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
                     .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -379,9 +391,9 @@ fun MainScreen(
                             )
                         }
                     }
-                } else {
+                } else if (isLoading) {
                     Text(
-                        text = if (isLoading) "正在获取节点..." else "请选择节点",
+                        text = "正在获取节点...",
                         fontSize = 16.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -402,7 +414,7 @@ fun MainScreen(
                             }
                         }
                     },
-                    customLabel = if (currentNode == null && vpnState == VpnState.DISCONNECTED) "点击选择测试模式后自动择优连接" else null
+                    customLabel = if (currentNode == null && vpnState == VpnState.DISCONNECTED) "点击中间按钮进行自动择优连接" else null
                 )
                 
                 // 流量统计 (仅在连接时显示)
@@ -421,7 +433,7 @@ fun MainScreen(
                 // 节点选择器
                 NodeSelector(
                     currentNode = currentNode,
-                    onClick = { viewModel.showNodeList() }
+                    onClick = onOpenNodeList
                 )
                 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -440,18 +452,6 @@ fun MainScreen(
     }
     
     // 节点列表弹窗
-    if (showNodeList) {
-        NodeListDialog(
-            nodes = nodes,
-            selectedNodeId = selectedNodeId,
-            isTesting = isTesting,
-            testingLabel = testingLabel,
-            onNodeSelected = { node -> viewModel.selectNode(node) },
-            onRefresh = { viewModel.refreshNodesWithDefaultTest() },
-            onDismiss = { viewModel.hideNodeList() }
-        )
-    }
-
     if (showAutoTestResultDialog) {
         val currentPreferMode = preferTestModes.firstOrNull { it.id == preferTestSelectedModeId }
         val qualifiedNodes = autoTestResultSnapshot
@@ -491,77 +491,6 @@ fun MainScreen(
             onConfirm = { modeId ->
                 showQuickModePicker = false
                 onStartVpn { viewModel.startPreferModeAutoSelectAndConnect(modeId) }
-            }
-        )
-    }
-
-    if (showTcpingActionDialog) {
-        TestActionDialog(
-            title = "TCPing",
-            onDismiss = { showTcpingActionDialog = false },
-            onExecute = {
-                showTcpingActionDialog = false
-                viewModel.showNodeListForTest("tcping")
-            },
-            onSetDefault = {
-                showTcpingActionDialog = false
-                viewModel.setStartupDefaultTestMode(StartupDefaultTestMode.TCPING)
-                Toast.makeText(context, "APP启动将自动执行TCPing测试", Toast.LENGTH_SHORT).show()
-            },
-            onDisableDefault = {
-                showTcpingActionDialog = false
-                viewModel.clearStartupDefaultTestMode()
-                Toast.makeText(context, "APP启动默认测试已关闭", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (showUrlTestActionDialog) {
-        TestActionDialog(
-            title = "URL Test",
-            onDismiss = { showUrlTestActionDialog = false },
-            onExecute = {
-                showUrlTestActionDialog = false
-                viewModel.showNodeListForTest("urltest")
-            },
-            onSetDefault = {
-                showUrlTestActionDialog = false
-                viewModel.setStartupDefaultTestMode(StartupDefaultTestMode.URL_TEST)
-                Toast.makeText(context, "APP启动将自动执行URL Test测试", Toast.LENGTH_SHORT).show()
-            },
-            onDisableDefault = {
-                showUrlTestActionDialog = false
-                viewModel.clearStartupDefaultTestMode()
-                Toast.makeText(context, "APP启动默认测试已关闭", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (showNodeIpInfoActionDialog) {
-        TestActionDialog(
-            title = "节点IP信息",
-            setDefaultLabel = "开启VPN时默认测试",
-            disableDefaultLabel = "开启VPN时关闭测试",
-            onDismiss = { showNodeIpInfoActionDialog = false },
-            onExecute = {
-                showNodeIpInfoActionDialog = false
-                val selectedNode = currentNode
-                if (selectedNode == null) {
-                    Toast.makeText(context, "请先选择节点", Toast.LENGTH_SHORT).show()
-                } else {
-                    nodeForIpInfo = selectedNode
-                    showNodeIpInfoDialog = true
-                }
-            },
-            onSetDefault = {
-                showNodeIpInfoActionDialog = false
-                viewModel.setNodeIpInfoTestOnVpnStart(true)
-                Toast.makeText(context, "开启VPN时将自动执行节点IP信息测试", Toast.LENGTH_SHORT).show()
-            },
-            onDisableDefault = {
-                showNodeIpInfoActionDialog = false
-                viewModel.setNodeIpInfoTestOnVpnStart(false)
-                Toast.makeText(context, "已关闭开启VPN时节点IP信息自动测试", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -659,18 +588,10 @@ fun MainScreen(
     
     // 网速测试弹窗
     if (showSpeedTestDialog) {
-        SpeedTestDialog(onDismiss = { showSpeedTestDialog = false })
-    }
-
-    if (showUnlockTestDialog) {
-        UnlockTestDialog(
-            visibleNodes = nodes,
-            onDismiss = { showUnlockTestDialog = false }
+        SpeedTestDialog(
+            downloadTimeoutMs = speedTestDownloadTimeoutMs,
+            onDismiss = { showSpeedTestDialog = false }
         )
-    }
-
-    if (showNetworkToolboxDialog) {
-        NetworkToolboxDialog(onDismiss = { showNetworkToolboxDialog = false })
     }
 
     if (showNodeIpInfoDialog) {
@@ -966,38 +887,6 @@ private fun priorityDisplayLabel(priority: BestNodePriority, mode: TestPreferMod
             UnlockPriorityMode.TARGET_SITES -> "按指定网站优选"
         }
     }
-}
-
-@Composable
-private fun TestActionDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    onExecute: () -> Unit,
-    onSetDefault: () -> Unit,
-    onDisableDefault: () -> Unit,
-    setDefaultLabel: String = "APP启动默认执行",
-    disableDefaultLabel: String = "APP启动默认关闭"
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onExecute, modifier = Modifier.fillMaxWidth()) {
-                    Text("执行测试")
-                }
-                OutlinedButton(onClick = onSetDefault, modifier = Modifier.fillMaxWidth()) {
-                    Text(setDefaultLabel)
-                }
-                OutlinedButton(onClick = onDisableDefault, modifier = Modifier.fillMaxWidth()) {
-                    Text(disableDefaultLabel)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        }
-    )
 }
 
 @Composable

@@ -14,14 +14,11 @@
   <a href="#环境要求">环境要求</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#配置说明">配置说明</a> •
-  <a href="#api-接口">API 接口</a> •
+  <a href="#API 接口（简单部署方式可以参考apis目录里面说明）">API 接口</a> •
   <a href="#自定义">自定义</a> •
   <a href="#构建发布">构建发布</a> •
   <a href="#其他说明">其他说明</a>
 </p>
-
-
-
 
 ---
 
@@ -46,6 +43,7 @@
 - 🚀 **多协议支持**：VLESS、VMess、Trojan、Hysteria2、AnyTLS、TUIC、Naive、WireGuard、Shadowsocks、SOCKS4/5、HTTP/HTTPS 代理
 - 🧭 **智能分流**：国内流量直连，国外流量代理，自动识别主流 CN 应用/CDN
 - ⚡ **自动选择**：一键测速，自动选择最优节点
+- 🔧 **协议兼容增强**：自动归一化传输类型（h2→http、xhttp→httpupgrade），完善 ALPN / fingerprint→uTLS / insecure 多别名兼容，支持 Hysteria2 端口跳跃（server_ports）、TUIC id 参数别名
 - 📦 **分应用代理**：精细控制哪些应用走代理或绕过 VPN
 - 🌐 **绕过局域网**：一键开关，局域网流量直连不受影响
 - 🌍 **IPv6 路由**：支持 IPv6 网络访问，可选禁用/启用/优先/仅 IPv6 模式
@@ -62,7 +60,7 @@
 - 🎬 **流媒体解锁测试**：集成 UnlockTests，可逐节点测试国外主流网站解锁情况并展示可滚动结果明细，支持“当前节点”一键勾选与“随机测试节点数”勾选
 - ⚡ **Cloudflare 网速测试**：集成 Cloudflare Speed Test，支持下载/上传测速，实时显示速率
 - 📡 **TCPing 测试**：直接 TCP 连接测试节点可达性和延迟
-- 🔍 **节点出口 IP 信息查询**：在三点菜单中可基于“当前选择节点”查询出口 IP 详细信息（地区、ASN、欺诈评分、是否住宅/原生IP等），无需先连接 VPN
+- 🔍 **节点出口 IP 信息查询**：在三点菜单中可基于“当前选择节点”查询出口 IP 详细信息（地区、ASN、欺诈评分、是否住宅/原生IP等），无需先连接主 VPN（通过临时本地 SOCKS 代理走所选节点出口发起查询）
 - 🗑️ **清理不合格节点**：一键隐藏超时/不可用/不达标节点（UI 过滤，不删除数据库数据）
 - 🛠️ **网络工具箱**：内置 10 种常用网络检测工具（出口检测、IP查询、WebRTC泄漏、DNS泄漏、速度测试等），一键跳转浏览器使用
 
@@ -73,7 +71,9 @@
 - ⏳ **节流保护**：刷新、切换备用节点、检查更新等操作 5 秒内防重复触发
 - 🔔 **公告系统**：支持远程推送公告通知
 - ℹ️ **关于页面**：展示应用版本信息、开源协议、GitHub 仓库链接和免责声明
-- 🎨 **现代 UI**：基于 Jetpack Compose，Material Design 3 风格
+- ⚙️ **其他配置**：侧边栏可进入“其他配置”页面，自定义 TCPing/URL Test/节点 IP 信息/下载测速超时时间、并发数、VPN MTU 等参数
+- 🚀 **启动画面**：可配置启动倒计时时长（支持跳过），可在 `AppConfig.kt` 中设置 `STARTUP_SPLASH_DURATION_SECONDS`
+- 🎨 **现代 UI**：基于 Jetpack Compose，Material Design 3 风格，页面使用 NavHost + NavController 路由管理
 - 🔧 **开源可定制**：易于修改 API、品牌和配置
 
 ### 更新与安全
@@ -91,6 +91,7 @@
 | 组件 | 技术 |
 |------|------|
 | **UI 框架** | Jetpack Compose + Material 3 |
+| **页面路由** | NavHost + NavController (Jetpack Navigation Compose) |
 | **架构模式** | MVVM (ViewModel + StateFlow) |
 | **网络请求** | Retrofit2 + OkHttp3 |
 | **本地存储** | Room Database (SQLCipher 加密) + DataStore |
@@ -164,6 +165,8 @@ app/
 
 ```kotlin
 object AppConfig {
+    const val STARTUP_SPLASH_DURATION_SECONDS = 10 // 启动图倒计时时长，设为0则不启用
+
     // 节点订阅 API
     const val SUBSCRIPTION_URL = "https://your-server.com/api/nodes"
     // 版本更新 API
@@ -184,17 +187,17 @@ object AppConfig {
     const val FEEDBACK_URL = "https://github.com/your-username/your-repo/issues"
     // 项目源码地址（留空则隐藏关于页相关按钮）
     const val GITHUB_URL = "https://github.com/your-username/your-repo"
+
+    // 延迟测试 (TCPing & URL Test)
+    const val TCPING_TEST_TIMEOUT = 3000L // 超时默认3秒
+    const val URL_TEST_URL = "https://www.google.com/generate_204"
+    const val URL_TEST_TIMEOUT = 3000L // 超时默认3秒
+    const val URL_TEST_RETRY_COUNT = 1 // URL Test 自动重试次数，仅对503/504或异常生效
     
     // 延迟测试并发数
     const val TCPING_CONCURRENCY = 16
     const val URL_TEST_CONCURRENCY = 10
     const val AUTO_TEST_UNLOCK_CONCURRENCY = 3 // 流媒体解锁测试并发建议2~3
-
-    // 延迟测试 (TCPing & URL Test)
-    const val TCPING_TEST_TIMEOUT = 3000L // 超时默认3秒
-    
-    const val URL_TEST_URL = "https://www.google.com/generate_204"
-    const val URL_TEST_TIMEOUT = 5000L // 超时默认5秒
 
     // VPN 核心参数
     const val VPN_MTU = 9000
@@ -204,9 +207,14 @@ object AppConfig {
     val HTTP_USER_AGENT: String  // 运行时 getter，自动跟随版本号
         get() = "FireflyVPN/${BuildConfig.VERSION_NAME}"
 
+    // 通知
+    const val NOTIFICATION_CHANNEL_ID = "vpn_service"
+    const val NOTIFICATION_ID = 1
+
     // 节点出口 IP 信息查询
     const val NODE_IP_INFO_URL = "https://my.ippure.com/v1/info"
     const val NODE_IP_INFO_TIMEOUT_MS = 12000L
+    const val NODE_IP_INFO_RETRY_COUNT = 1 // 节点IP信息自动重试次数
 
     // 速度测试 (Cloudflare)
     const val SPEED_TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down"
@@ -278,26 +286,30 @@ app/src/main/java/xyz/a202132/app/
 │   └── ServiceManager.kt         # VPN 服务管理器
 ├── ui/
 │   ├── components/               # 可复用 UI 组件
+│   │   ├── AppScreenScaffold.kt # 通用页面脚手架（统一 TopAppBar + 返回键）
 │   │   ├── ConnectButton.kt     # 连接按钮
 │   │   ├── DrawerContent.kt     # 侧边栏内容
-│   │   ├── FullscreenDialogScaffold.kt     # 全屏对话框（暂未使用）
-│   │   ├── NodeListDialog.kt    # 节点列表弹窗（含工具按钮）
+│   │   ├── NodeListDialog.kt    # 节点列表页面（文件名沿用旧命名，主入口已改为 NodeListScreen）
 │   │   ├── NodeSelector.kt      # 节点选择器
-│   │   ├── FullscreenDialogScaffold.kt     # 开屏启动图
+│   │   ├── StartupSplashOverlay.kt  # 启动画面覆盖层（可配置倒计时）
 │   │   ├── TestPreferPanelDialog.kt # 测试择优面板（全屏横屏）
 │   │   └── TrafficStatsRow.kt   # 流量统计展示
 │   ├── dialogs/                  # 对话框
 │   │   ├── AboutDialog.kt       # 关于页面弹窗
 │   │   ├── AutoTestResultDialog.kt  # 自动化测试结果与详情弹窗
 │   │   ├── Dialogs.kt           # 通用对话框（公告、更新等）
-│   │   ├── NetworkToolboxDialog.kt  # 网络工具箱弹窗
+│   │   ├── NetworkToolboxDialog.kt  # 网络工具箱页面（文件名沿用旧命名，主入口已改为 NetworkToolboxScreen）
 │   │   ├── NodeIpInfoDialog.kt      # 节点出口 IP 信息弹窗
 │   │   ├── SpeedTestDialog.kt       # 网速测试弹窗
-│   │   ├── UnlockTestDialog.kt      # 流媒体解锁测试弹窗
+│   │   ├── UnlockTestDialog.kt      # 流媒体解锁测试弹窗（旧入口，新入口见 UnlockTestScreen）
 │   │   └── UserAgreementDialog.kt   # 用户协议弹窗
-│   ├── screens/                  # 页面
+│   ├── navigation/               # 页面路由
+│   │   └── AppRoute.kt          # 路由常量定义（NavHost 目的地）
+│   ├── screens/                  # 页面（通过 NavHost + NavController 管理）
 │   │   ├── MainScreen.kt        # 主界面
-│   │   └── PerAppProxyScreen.kt # 分应用代理设置界面
+│   │   ├── OtherConfigScreen.kt # 其他配置页面（超时/并发/MTU 等）
+│   │   ├── PerAppProxyScreen.kt # 分应用代理设置界面
+│   │   └── UnlockTestScreen.kt  # 流媒体解锁测试页面
 │   └── theme/                    # 主题配置
 │       ├── Color.kt             # 颜色定义
 │       ├── Theme.kt             # 主题配置
@@ -477,6 +489,27 @@ const val NETWORK_TOOLS_JSON = """
 
 ---
 
+### 其他配置
+
+"其他配置"页面集中管理各类测试超时、并发数和网络参数，修改后点击"保存"生效。
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| APP启动默认测试 | 不执行 | 可选不执行 / TCPing / URL Test |
+| VPN连接后获取IP信息 | 关闭 | 仅影响后续新的连接动作 |
+| TCPing 超时 | 3000ms | 最低 500ms |
+| URL Test 超时 | 3000ms | 最低 500ms |
+| 节点IP信息超时 | 12000ms | 最低 1000ms |
+| 单次下载测速超时 | 25000ms | 设为 0 则不限制 |
+| TCPing 并发数 | 16 | 范围 1~128 |
+| URL Test 并发数 | 10 | 范围 1~128 |
+| 流媒体测试并发数 | 3 | 范围 1~32 |
+| VPN MTU | 9000 | 范围 576~9000，修改后需断开重连 |
+
+**设置位置**：侧边栏 → 其他配置
+
+---
+
 ### 绕过局域网
 
 开启后，局域网流量将绕过 VPN 直连，确保内网设备访问正常。
@@ -574,6 +607,18 @@ IPv6 路由功能允许用户控制 VPN 对 IPv6 网络的处理方式。
 - `preferTestSelectedModeId`
 - `startupDefaultTestMode`
 - `startupDefaultTestChoiceDone`
+
+`SettingsRepository` 用户可配置项（"其他配置"页面）：
+
+- `tcpingTestTimeoutMs` — TCPing 超时（毫秒）
+- `urlTestTimeoutMs` — URL Test 超时（毫秒）
+- `nodeIpInfoTimeoutMs` — 节点 IP 信息查询超时（毫秒）
+- `speedTestDownloadTimeoutMs` — 单次下载测速超时（毫秒）
+- `tcpingConcurrency` — TCPing 并发数
+- `urlTestConcurrency` — URL Test 并发数
+- `unlockTestConcurrency` — 流媒体测试并发数
+- `vpnMtu` — VPN MTU 值（修改后需断开重连）
+- `nodeIpInfoTestOnVpnStart` — VPN 连接后是否自动获取节点 IP 信息
 
 > ⚠️ 当前数据库使用 SQLCipher 加密存储（version 2），并配置了 `fallbackToDestructiveMigration()`。当 Room 版本升级时，会清空本地节点数据后重建。旧版明文数据库会在升级时自动检测并删除重建。
 
@@ -1289,6 +1334,10 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
   - **节点请求（默认模式）**→ Toast 显示错误信息
   - **公告/更新请求** → Toast进行提示，不影响 APP 使用
 
+**URL Test 自动重试**：仅对 HTTP 503 / 504 或请求异常自动重试 1 次（`URL_TEST_RETRY_COUNT`），200 但 delay 非法不会重试。
+
+**节点 IP 信息自动重试**：仅对超时、网络异常（IOException）或 HTTP 429 / 500 / 502 / 503 / 504 自动重试 1 次（`NODE_IP_INFO_RETRY_COUNT`），重试间隔 300ms。
+
 超时时间统一在 `AppConfig.kt` 配置：
 
 | 配置项 | 默认值 | 说明 |
@@ -1296,6 +1345,8 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 | `NODE_REQUEST_TIMEOUT_MS` | 25000 | 节点请求超时（毫秒） |
 | `NOTICE_REQUEST_TIMEOUT_MS` | 25000 | 公告请求超时（毫秒） |
 | `UPDATE_REQUEST_TIMEOUT_MS` | 25000 | 更新请求超时（毫秒） |
+| `URL_TEST_RETRY_COUNT` | 1 | URL Test 重试次数（仅 503/504/异常） |
+| `NODE_IP_INFO_RETRY_COUNT` | 1 | 节点 IP 信息重试次数（仅超时/网络异常/服务端错误） |
 
 ---
 
@@ -1359,6 +1410,7 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 本项目基于 [GNU General Public License v3.0](LICENSE) 开源，与核心依赖 sing-box 的协议保持一致。
 
 **依赖项目**:
+
 - [sing-box](https://github.com/SagerNet/sing-box) - GPLv3
 - [UnlockTests](https://github.com/oneclickvirt/UnlockTests) - Apache-2.0
 
@@ -1370,4 +1422,4 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 - [UnlockTests](https://github.com/oneclickvirt/UnlockTests) - 流媒体解锁测试
 - [JetBrains/Kotlin](https://github.com/JetBrains/kotlin) - Kotlin 语言
 - [Google/Jetpack Compose](https://developer.android.com/jetpack/compose) - UI 框架
-
+- [Pillo](https://x.com/Pillo_0000) - APP流萤启动图作者

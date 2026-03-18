@@ -19,9 +19,22 @@ data class SpeedTestResult(
     val durationMs: Long
 )
 
-class SpeedTestService {
+class SpeedTestService(
+    downloadTimeoutMs: Long = AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS
+) {
 
-    private val client = NetworkClient.withUserAgent(OkHttpClient.Builder())
+    private val downloadClient = NetworkClient.withUserAgent(OkHttpClient.Builder())
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .apply {
+            if (downloadTimeoutMs > 0L) {
+                callTimeout(downloadTimeoutMs, TimeUnit.MILLISECONDS)
+            }
+        }
+        .build()
+
+    private val uploadClient = NetworkClient.withUserAgent(OkHttpClient.Builder())
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
@@ -49,7 +62,7 @@ class SpeedTestService {
         var totalBytesRead = 0L
 
         try {
-            client.newCall(request).execute().use { response ->
+            downloadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("Unexpected code $response")
 
                 val body = response.body ?: throw IOException("ResponseBody is null")
@@ -69,7 +82,7 @@ class SpeedTestService {
                     if (timeDelta >= updateInterval) {
                         if (timeDelta > 0) {
                             val bytesDelta = totalBytesRead - lastBytesRead
-                            // Calculate instantaneous speed
+                            // 计算瞬时速度
                             val currentSpeedMbps = (bytesDelta * 8f / 1_000_000f) / (timeDelta / 1000f)
                             if (currentSpeedMbps > peakSpeed) peakSpeed = currentSpeedMbps
                             
@@ -82,8 +95,7 @@ class SpeedTestService {
                 }
             }
         } catch (e: Exception) {
-            // 如果取消，我们是否仍然希望返回部分结果或重新抛出异常？
-            // 目前，如果取消，我们就直接停止。如果出错，则重新抛出异常。
+            // 若被取消，则直接停止；若发生错误，则重新抛出。
             if (!isCancelled) throw e
         }
 
@@ -110,8 +122,8 @@ class SpeedTestService {
             override fun contentLength() = size
 
             override fun writeTo(sink: BufferedSink) {
-                // 生成要写入的数据块
-                val buffer = ByteArray(8192) { 1 }
+                // 生成待写入的数据块
+                val buffer = ByteArray(8192) { 1 } // Dummy data
                 var uploaded = 0L
                 var lastUpdate = System.currentTimeMillis()
                 val updateInterval = 100 // ms
@@ -151,7 +163,7 @@ class SpeedTestService {
         Log.d(TAG, "Starting upload test: url=${AppConfig.SPEED_TEST_UPLOAD_URL}, size=$size")
             
         try {
-            client.newCall(request).execute().use { response ->
+            uploadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("Unexpected code $response")
             }
         } catch (e: Exception) {
@@ -160,7 +172,7 @@ class SpeedTestService {
 
         val endTime = System.currentTimeMillis()
         val duration = endTime - startTime
-        val realBytes = if (finalBytesUploaded > 0) finalBytesUploaded else size // 如果 writeTo 操作完成，则回退
+        val realBytes = if (finalBytesUploaded > 0) finalBytesUploaded else size // Fallback if writeTo completed
         val avgSpeed = if (duration > 0) (realBytes * 8f / 1_000_000f) / (duration / 1000f) else 0f
 
         Log.d(TAG, "Upload test finished: avg=${avgSpeed}Mbps, peak=${peakSpeed}Mbps, duration=${duration}ms")

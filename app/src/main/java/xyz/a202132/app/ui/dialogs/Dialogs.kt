@@ -15,7 +15,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.DialogProperties
 import xyz.a202132.app.data.model.NoticeInfo
-import xyz.a202132.app.data.model.UpdateInfo
 import xyz.a202132.app.ui.theme.*
 import xyz.a202132.app.R
 

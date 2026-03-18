@@ -1,6 +1,5 @@
 package xyz.a202132.app.service
 
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities

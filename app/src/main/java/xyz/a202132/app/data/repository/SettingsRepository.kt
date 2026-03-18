@@ -70,6 +70,14 @@ class SettingsRepository(private val context: Context) {
         private val STARTUP_DEFAULT_TEST_MODE = stringPreferencesKey("startup_default_test_mode")
         private val STARTUP_DEFAULT_TEST_CHOICE_DONE = booleanPreferencesKey("startup_default_test_choice_done")
         private val NODE_IP_INFO_TEST_ON_VPN_START = booleanPreferencesKey("node_ip_info_test_on_vpn_start")
+        private val TCPING_TEST_TIMEOUT_MS = longPreferencesKey("tcping_test_timeout_ms")
+        private val URL_TEST_TIMEOUT_MS = longPreferencesKey("url_test_timeout_ms")
+        private val NODE_IP_INFO_TIMEOUT_MS = longPreferencesKey("node_ip_info_timeout_ms")
+        private val SPEED_TEST_DOWNLOAD_TIMEOUT_MS = longPreferencesKey("speed_test_download_timeout_ms")
+        private val TCPING_CONCURRENCY = intPreferencesKey("tcping_concurrency")
+        private val URL_TEST_CONCURRENCY = intPreferencesKey("url_test_concurrency")
+        private val UNLOCK_TEST_CONCURRENCY = intPreferencesKey("unlock_test_concurrency")
+        private val VPN_MTU = intPreferencesKey("vpn_mtu")
     }
     
     val selectedNodeId: Flow<String?> = context.dataStore.data.map { preferences ->
@@ -470,6 +478,87 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNodeIpInfoTestOnVpnStart(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[NODE_IP_INFO_TEST_ON_VPN_START] = enabled
+        }
+    }
+
+    val tcpingTestTimeoutMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        (preferences[TCPING_TEST_TIMEOUT_MS] ?: xyz.a202132.app.AppConfig.TCPING_TEST_TIMEOUT).coerceAtLeast(500L)
+    }
+
+    suspend fun setTcpingTestTimeoutMs(value: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[TCPING_TEST_TIMEOUT_MS] = value.coerceAtLeast(500L)
+        }
+    }
+
+    val urlTestTimeoutMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        (preferences[URL_TEST_TIMEOUT_MS] ?: xyz.a202132.app.AppConfig.URL_TEST_TIMEOUT).coerceAtLeast(500L)
+    }
+
+    suspend fun setUrlTestTimeoutMs(value: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[URL_TEST_TIMEOUT_MS] = value.coerceAtLeast(500L)
+        }
+    }
+
+    val nodeIpInfoTimeoutMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        (preferences[NODE_IP_INFO_TIMEOUT_MS] ?: xyz.a202132.app.AppConfig.NODE_IP_INFO_TIMEOUT_MS).coerceAtLeast(1000L)
+    }
+
+    suspend fun setNodeIpInfoTimeoutMs(value: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[NODE_IP_INFO_TIMEOUT_MS] = value.coerceAtLeast(1000L)
+        }
+    }
+
+    val speedTestDownloadTimeoutMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        (preferences[SPEED_TEST_DOWNLOAD_TIMEOUT_MS] ?: xyz.a202132.app.AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS)
+            .coerceAtLeast(0L)
+    }
+
+    suspend fun setSpeedTestDownloadTimeoutMs(value: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[SPEED_TEST_DOWNLOAD_TIMEOUT_MS] = value.coerceAtLeast(0L)
+        }
+    }
+
+    val tcpingConcurrency: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[TCPING_CONCURRENCY] ?: xyz.a202132.app.AppConfig.TCPING_CONCURRENCY).coerceIn(1, 128)
+    }
+
+    suspend fun setTcpingConcurrency(value: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[TCPING_CONCURRENCY] = value.coerceIn(1, 128)
+        }
+    }
+
+    val urlTestConcurrency: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[URL_TEST_CONCURRENCY] ?: xyz.a202132.app.AppConfig.URL_TEST_CONCURRENCY).coerceIn(1, 128)
+    }
+
+    suspend fun setUrlTestConcurrency(value: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[URL_TEST_CONCURRENCY] = value.coerceIn(1, 128)
+        }
+    }
+
+    val unlockTestConcurrency: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[UNLOCK_TEST_CONCURRENCY] ?: xyz.a202132.app.AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY).coerceIn(1, 32)
+    }
+
+    suspend fun setUnlockTestConcurrency(value: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[UNLOCK_TEST_CONCURRENCY] = value.coerceIn(1, 32)
+        }
+    }
+
+    val vpnMtu: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[VPN_MTU] ?: xyz.a202132.app.AppConfig.VPN_MTU).coerceIn(576, 9000)
+    }
+
+    suspend fun setVpnMtu(value: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[VPN_MTU] = value.coerceIn(576, 9000)
         }
     }
 

@@ -8,14 +8,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import xyz.a202132.app.ui.theme.BackgroundDarkVariant
 import xyz.a202132.app.ui.theme.Primary
-import xyz.a202132.app.ui.theme.TextPrimary
-import xyz.a202132.app.ui.theme.TextSecondary
 
 @Composable
 fun UserAgreementDialog(

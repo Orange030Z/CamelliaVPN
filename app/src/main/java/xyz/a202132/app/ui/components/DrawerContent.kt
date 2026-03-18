@@ -31,7 +31,6 @@ import android.content.Intent
 import android.net.Uri
 import xyz.a202132.app.data.model.IPv6RoutingMode
 import xyz.a202132.app.ui.dialogs.AboutDialog
-import xyz.a202132.app.ui.theme.*
 import xyz.a202132.app.viewmodel.AutoTestLatencyMode
 import xyz.a202132.app.viewmodel.BestNodePriority
 import xyz.a202132.app.viewmodel.TestPreferMode
@@ -40,6 +39,7 @@ import xyz.a202132.app.viewmodel.TestPreferMode
 fun DrawerContent(
     onCheckUpdate: () -> Unit,
     onOpenPerAppProxy: () -> Unit,
+    onOpenOtherConfig: () -> Unit,
     onOpenTestPreferPanel: () -> Unit,
     bypassLan: Boolean,
     onToggleBypassLan: (Boolean) -> Unit,
@@ -108,7 +108,6 @@ fun DrawerContent(
         modifier = Modifier
             .fillMaxHeight()
             .width(280.dp)
-            .verticalScroll(rememberScrollState())
             .padding(vertical = 24.dp)
     ) {
         // 标题
@@ -122,133 +121,151 @@ fun DrawerContent(
         
         Divider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 8.dp))
         
-        // 菜单项
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 8.dp)
+        ) {
+            // 菜单项
 
-        // 备用节点 (仅在有效时显示)
-        if (isBackupNodeVisible) {
-            DrawerMenuToggle(
-                icon = Icons.Outlined.Backup,
-                title = "备用节点",
-                subtitle = if (backupNodeEnabled) "已开启" else "已关闭",
-                checked = backupNodeEnabled,
-                onCheckedChange = { isChecked ->
-                    if (isChecked) {
-                        // 开启时显示确认对话框
-                        showBackupNodeConfirmDialog = true
-                    } else {
-                        // 关闭直接执行
-                        onToggleBackupNode(false)
+            // 备用节点 (仅在有效时显示)
+            if (isBackupNodeVisible) {
+                DrawerMenuToggle(
+                    icon = Icons.Outlined.Backup,
+                    title = "备用节点",
+                    subtitle = if (backupNodeEnabled) "已开启" else "已关闭",
+                    checked = backupNodeEnabled,
+                    onCheckedChange = { isChecked ->
+                        if (isChecked) {
+                            // 开启时显示确认对话框
+                            showBackupNodeConfirmDialog = true
+                        } else {
+                            // 关闭直接执行
+                            onToggleBackupNode(false)
+                        }
                     }
+                )
+            }
+
+            // IPv6 路由菜单项
+            DrawerMenuItem(
+                icon = Icons.Outlined.SettingsEthernet,
+                title = "IPv6 路由",
+                subtitle = when (ipv6RoutingMode) {
+                    IPv6RoutingMode.DISABLED -> "禁用"
+                    IPv6RoutingMode.ENABLED -> "启用"
+                    IPv6RoutingMode.PREFER -> "优先"
+                    IPv6RoutingMode.ONLY -> "仅"
+                },
+                onClick = { showIPv6Dialog = true }
+            )
+            
+            DrawerMenuItem(
+                icon = Icons.Outlined.Apps,
+                title = "分应用代理",
+                subtitle = "选择代理应用",
+                onClick = {
+                    onOpenPerAppProxy()
+                    onClose()
                 }
             )
-        }
-
-        // IPv6 路由菜单项
-        DrawerMenuItem(
-            icon = Icons.Outlined.SettingsEthernet,
-            title = "IPv6 路由",
-            subtitle = when (ipv6RoutingMode) {
-                IPv6RoutingMode.DISABLED -> "禁用"
-                IPv6RoutingMode.ENABLED -> "启用"
-                IPv6RoutingMode.PREFER -> "优先"
-                IPv6RoutingMode.ONLY -> "仅"
-            },
-            onClick = { showIPv6Dialog = true }
-        )
-        
-        DrawerMenuItem(
-            icon = Icons.Outlined.Apps,
-            title = "分应用代理",
-            subtitle = "选择代理应用",
-            onClick = {
-                onOpenPerAppProxy()
-                onClose()
-            }
-        )
-        
-        DrawerMenuToggle(
-            icon = Icons.Outlined.Router,
-            title = "绕过局域网",
-            subtitle = if (bypassLan) "已开启" else "已关闭",
-            checked = bypassLan,
-            onCheckedChange = { newValue ->
-                onToggleBypassLan(newValue)
-                Toast.makeText(
-                    context,
-                    if (newValue) "已开启绕过局域网" else "已关闭绕过局域网",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        )
-
-        DrawerMenuItem(
-            icon = Icons.Outlined.Settings,
-            title = "测试择优面板",
-            subtitle = autoTestProgress.message.ifBlank {
-                if (autoTestProgress.running) "运行中..." else "未运行"
-            },
-            onClick = {
-                onOpenTestPreferPanel()
-                onClose()
-            }
-        )
-
-        DrawerMenuItem(
-            icon = Icons.Outlined.SystemUpdate,
-            title = "检查更新",
-            onClick = {
-                onCheckUpdate()
-                onClose()
-            }
-        )
-        
-        DrawerMenuItem(
-            icon = Icons.Outlined.Language,
-            title = "官方网站",
-            onClick = {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.WEBSITE_URL))
-                context.startActivity(intent)
-                onClose()
-            }
-        )
-        
-        // 问题反馈 - 支持邮箱复制 + 链接跳转
-        val hasEmail = AppConfig.FEEDBACK_EMAIL.isNotBlank()
-        val hasFeedbackUrl = AppConfig.FEEDBACK_URL.isNotBlank()
-        
-        DrawerMenuItem(
-            icon = Icons.Outlined.Email,
-            title = "问题反馈",
-            subtitle = if (hasEmail) AppConfig.FEEDBACK_EMAIL else null,
-            onClick = {
-                if (hasEmail) {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("email", AppConfig.FEEDBACK_EMAIL)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "邮箱已复制", Toast.LENGTH_SHORT).show()
+            
+            DrawerMenuToggle(
+                icon = Icons.Outlined.Router,
+                title = "绕过局域网",
+                subtitle = if (bypassLan) "已开启" else "已关闭",
+                checked = bypassLan,
+                onCheckedChange = { newValue ->
+                    onToggleBypassLan(newValue)
+                    Toast.makeText(
+                        context,
+                        if (newValue) "已开启绕过局域网" else "已关闭绕过局域网",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
-                if (hasFeedbackUrl) {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.FEEDBACK_URL))
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Outlined.Settings,
+                title = "测试择优面板",
+                subtitle = autoTestProgress.message.ifBlank {
+                    if (autoTestProgress.running) "运行中..." else "未运行"
+                },
+                onClick = {
+                    onOpenTestPreferPanel()
+                    onClose()
+                }
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Outlined.Tune,
+                title = "其他配置",
+                onClick = {
+                    onOpenOtherConfig()
+                    onClose()
+                }
+            )
+
+            DrawerMenuItem(
+                icon = Icons.Outlined.SystemUpdate,
+                title = "检查更新",
+                onClick = {
+                    onCheckUpdate()
+                    onClose()
+                }
+            )
+            
+            DrawerMenuItem(
+                icon = Icons.Outlined.Language,
+                title = "官方网站",
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.WEBSITE_URL))
                     context.startActivity(intent)
                     onClose()
                 }
-            }
-        )
-        
-        DrawerMenuItem(
-            icon = Icons.Outlined.Info,
-            title = "关于",
-            onClick = { showAboutDialog = true }
-        )
-        
-        Spacer(modifier = Modifier.height(12.dp))
+            )
+            
+            // 问题反馈 - 支持邮箱复制 + 链接跳转
+            val hasEmail = AppConfig.FEEDBACK_EMAIL.isNotBlank()
+            val hasFeedbackUrl = AppConfig.FEEDBACK_URL.isNotBlank()
+            
+            DrawerMenuItem(
+                icon = Icons.Outlined.Email,
+                title = "问题反馈",
+                subtitle = if (hasEmail) AppConfig.FEEDBACK_EMAIL else null,
+                onClick = {
+                    if (hasEmail) {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("email", AppConfig.FEEDBACK_EMAIL)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "邮箱已复制", Toast.LENGTH_SHORT).show()
+                    }
+                    if (hasFeedbackUrl) {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.FEEDBACK_URL))
+                        context.startActivity(intent)
+                        onClose()
+                    }
+                }
+            )
+            
+            DrawerMenuItem(
+                icon = Icons.Outlined.Info,
+                title = "关于",
+                onClick = { showAboutDialog = true }
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        Divider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 8.dp))
         
         // 版本信息
         Text(
             text = "版本 ${BuildConfig.VERSION_NAME}",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 20.dp)
         )
     }
     
@@ -329,7 +346,7 @@ private fun DrawerMenuItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 16.dp),
+                .padding(horizontal = 24.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -378,7 +395,7 @@ private fun DrawerMenuToggle(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp),
+                .padding(horizontal = 24.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(

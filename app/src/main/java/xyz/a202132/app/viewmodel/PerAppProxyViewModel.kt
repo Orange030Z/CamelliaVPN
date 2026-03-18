@@ -92,7 +92,7 @@ class PerAppProxyViewModel(application: Application) : AndroidViewModel(applicat
     private val _isPermissionDenied = MutableStateFlow(false)
     val isPermissionDenied: StateFlow<Boolean> = _isPermissionDenied.asStateFlow()
     
-    // Scroll to Top Event Channel
+    // 滚动至顶部事件通道
     private val _scrollToTopEvent = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.BUFFERED)
     val scrollToTopEvent = _scrollToTopEvent.receiveAsFlow()
     
@@ -142,7 +142,7 @@ class PerAppProxyViewModel(application: Application) : AndroidViewModel(applicat
                             )
                         }
                     
-                    // 初始排序
+                    // 初步分类
                     sortApps(parsedApps, currentSelected)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to load installed apps", e)

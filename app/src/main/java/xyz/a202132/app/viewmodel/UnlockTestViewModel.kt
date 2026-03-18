@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -74,6 +73,8 @@ class UnlockTestViewModel(application: Application) : AndroidViewModel(applicati
 
     val currentSelectedNodeId = settingsRepository.selectedNodeId
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val unlockTestConcurrency = settingsRepository.unlockTestConcurrency
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY)
 
     private val _selectedNodeIds = MutableStateFlow<Set<String>>(emptySet())
     val selectedNodeIds = _selectedNodeIds.asStateFlow()
@@ -174,7 +175,7 @@ class UnlockTestViewModel(application: Application) : AndroidViewModel(applicati
         Log.i(tag, "Start unlock tests for ${selectedNodes.size} nodes")
 
         runningJob = viewModelScope.launch {
-            val concurrency = AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY.coerceAtLeast(1)
+            val concurrency = unlockTestConcurrency.value.coerceAtLeast(1)
             val completed = AtomicInteger(0)
             val total = selectedNodes.size
             try {

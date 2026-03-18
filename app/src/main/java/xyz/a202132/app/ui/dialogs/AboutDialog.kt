@@ -247,7 +247,7 @@ fun AboutDialog(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // 关闭按钮
+                // Close button
                 Button(
                     onClick = onDismiss,
                     modifier = Modifier.fillMaxWidth(),

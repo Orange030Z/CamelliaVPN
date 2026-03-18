@@ -13,6 +13,11 @@ import java.net.URL
 class LatencyTester {
     
     private val tag = "LatencyTester"
+
+    private data class UrlTestAttemptResult(
+        val result: LatencyResult,
+        val shouldRetry: Boolean
+    )
     
     data class LatencyResult(
         val nodeId: String,
@@ -26,7 +31,7 @@ class LatencyTester {
      * 测试单个节点 - Socket 连接测试
      * 如果连接成功或被拒绝(RST)，都视为网络连通
      */
-    private suspend fun testNodeSimple(node: Node): LatencyResult {
+    private suspend fun testNodeSimple(node: Node, timeoutMs: Long): LatencyResult {
         return try {
             Log.d(tag, ">>> TCPing: ${node.name} (${node.server}:${node.port})")
             
@@ -34,7 +39,7 @@ class LatencyTester {
             val socket = java.net.Socket()
             
             try {
-                socket.connect(java.net.InetSocketAddress(node.server, node.port), xyz.a202132.app.AppConfig.TCPING_TEST_TIMEOUT.toInt())
+                socket.connect(java.net.InetSocketAddress(node.server, node.port), timeoutMs.toInt())
                 
                 val elapsed = (System.currentTimeMillis() - start).toInt() 
                 val finalLatency = if (elapsed < 1) 1 else elapsed
@@ -69,12 +74,14 @@ class LatencyTester {
      * 批量 TCPing - 并发执行
      */
     suspend fun testAllNodes(
-        nodes: List<Node>, 
+        nodes: List<Node>,
+        timeoutMs: Long = xyz.a202132.app.AppConfig.TCPING_TEST_TIMEOUT,
+        concurrency: Int = xyz.a202132.app.AppConfig.TCPING_CONCURRENCY,
         onProgress: ((completed: Int, total: Int) -> Unit)? = null
     ): List<LatencyResult> = withContext(Dispatchers.IO) {
         Log.d(tag, "========== TCPing START: ${nodes.size} nodes ==========")
         
-        val semaphore = kotlinx.coroutines.sync.Semaphore(xyz.a202132.app.AppConfig.TCPING_CONCURRENCY)
+        val semaphore = kotlinx.coroutines.sync.Semaphore(concurrency.coerceAtLeast(1))
         val completedCount = java.util.concurrent.atomic.AtomicInteger(0)
         val totalCount = nodes.size
         
@@ -82,7 +89,7 @@ class LatencyTester {
             async {
                 semaphore.acquire()
                 try {
-                    val result = testNodeSimple(node)
+                    val result = testNodeSimple(node, timeoutMs.coerceAtLeast(500L))
                     val current = completedCount.incrementAndGet()
                     onProgress?.invoke(current, totalCount)
                     result
@@ -98,29 +105,37 @@ class LatencyTester {
     }
     
     // 保持接口兼容
-    suspend fun testNode(node: Node): LatencyResult = withContext(Dispatchers.IO) {
-        testNodeSimple(node)
+    suspend fun testNode(
+        node: Node,
+        timeoutMs: Long = xyz.a202132.app.AppConfig.TCPING_TEST_TIMEOUT
+    ): LatencyResult = withContext(Dispatchers.IO) {
+        testNodeSimple(node, timeoutMs)
     }
     
     // ==================== URL Test (ClashAPI) ====================
     
     companion object {
-        // Moved to AppConfig
+        // 已移至 AppConfig
     }
     
     /**
      * 通过 ClashAPI 测试单个节点的 HTTP 握手延迟
      * 需要 VPN 已连接（sing-box 运行中）
      */
-    private suspend fun urlTestNode(node: Node, clashApiPort: Int): LatencyResult = withContext(Dispatchers.IO) {
+    private suspend fun urlTestNodeOnce(
+        node: Node,
+        clashApiPort: Int,
+        targetUrl: String,
+        timeoutMs: Long
+    ): UrlTestAttemptResult = withContext(Dispatchers.IO) {
         try {
             Log.d(tag, ">>> URL Test: ${node.name} (${node.id})")
             
             val encodedId = java.net.URLEncoder.encode(node.id, "UTF-8")
-            val targetUrl = java.net.URLEncoder.encode(xyz.a202132.app.AppConfig.URL_TEST_URL, "UTF-8")
-            val timeout = xyz.a202132.app.AppConfig.URL_TEST_TIMEOUT.toInt()
+            val encodedTargetUrl = java.net.URLEncoder.encode(targetUrl, "UTF-8")
+            val timeout = timeoutMs.coerceAtLeast(500L).toInt()
             
-            val apiUrl = "http://127.0.0.1:$clashApiPort/proxies/$encodedId/delay?url=$targetUrl&timeout=$timeout"
+            val apiUrl = "http://127.0.0.1:$clashApiPort/proxies/$encodedId/delay?url=$encodedTargetUrl&timeout=$timeout"
             
             val connection = URL(apiUrl).openConnection() as HttpURLConnection
             connection.connectTimeout = timeout + 1000
@@ -138,24 +153,54 @@ class LatencyTester {
                     
                     if (delay != null && delay > 0) {
                         Log.d(tag, "<<< URL Test OK: ${node.name}, ${delay}ms")
-                        LatencyResult(node.id, delay, true)
+                        UrlTestAttemptResult(
+                            result = LatencyResult(node.id, delay, true),
+                            shouldRetry = false
+                        )
                     } else {
                         Log.w(tag, "<<< URL Test invalid delay: ${node.name}, response=$responseBody")
-                        LatencyResult(node.id, -2, false)
+                        UrlTestAttemptResult(
+                            result = LatencyResult(node.id, -2, false),
+                            shouldRetry = false
+                        )
                     }
                 } else {
-                    // 可能是 408 (timeout) 或其他错误
                     val errorBody = try { connection.errorStream?.bufferedReader()?.readText() } catch (e: Exception) { null }
                     Log.w(tag, "<<< URL Test HTTP $responseCode: ${node.name}, error=$errorBody")
-                    LatencyResult(node.id, -2, false)
+                    UrlTestAttemptResult(
+                        result = LatencyResult(node.id, -2, false),
+                        shouldRetry = responseCode == 503 || responseCode == 504
+                    )
                 }
             } finally {
                 connection.disconnect()
             }
         } catch (e: Exception) {
             Log.e(tag, "<<< URL Test FAILED: ${node.name}, error=${e.message}")
-            LatencyResult(node.id, -2, false)
+            UrlTestAttemptResult(
+                result = LatencyResult(node.id, -2, false),
+                shouldRetry = true
+            )
         }
+    }
+
+    private suspend fun urlTestNode(
+        node: Node,
+        clashApiPort: Int,
+        targetUrl: String,
+        timeoutMs: Long,
+        retryCount: Int
+    ): LatencyResult = withContext(Dispatchers.IO) {
+        var lastResult = LatencyResult(node.id, -2, false)
+        repeat(retryCount.coerceAtLeast(0) + 1) { attempt ->
+            val attemptResult = urlTestNodeOnce(node, clashApiPort, targetUrl, timeoutMs)
+            lastResult = attemptResult.result
+            if (lastResult.isAvailable || !attemptResult.shouldRetry || attempt >= retryCount) {
+                return@withContext lastResult
+            }
+            Log.w(tag, "URL Test retry ${attempt + 1}/$retryCount: ${node.name} (${node.id})")
+        }
+        lastResult
     }
     
     /**
@@ -163,14 +208,17 @@ class LatencyTester {
      * @param clashApiPort ClashAPI 端口 (VPN=9090, 无头=19090)
      */
     suspend fun urlTestAllNodes(
-        nodes: List<Node>, 
+        nodes: List<Node>,
         clashApiPort: Int = 9090,
+        targetUrl: String = xyz.a202132.app.AppConfig.URL_TEST_URL,
+        timeoutMs: Long = xyz.a202132.app.AppConfig.URL_TEST_TIMEOUT,
+        retryCount: Int = xyz.a202132.app.AppConfig.URL_TEST_RETRY_COUNT,
+        concurrency: Int = xyz.a202132.app.AppConfig.URL_TEST_CONCURRENCY,
         onProgress: ((completed: Int, total: Int) -> Unit)? = null
     ): List<LatencyResult> = withContext(Dispatchers.IO) {
         Log.d(tag, "========== URL Test START: ${nodes.size} nodes (port=$clashApiPort) ==========")
         
-        // 并发限制 10，避免ClashAPI过载
-        val semaphore = kotlinx.coroutines.sync.Semaphore(xyz.a202132.app.AppConfig.URL_TEST_CONCURRENCY)
+        val semaphore = kotlinx.coroutines.sync.Semaphore(concurrency.coerceAtLeast(1))
         val completedCount = java.util.concurrent.atomic.AtomicInteger(0)
         val totalCount = nodes.size
         
@@ -178,7 +226,7 @@ class LatencyTester {
             async {
                 semaphore.acquire()
                 try {
-                    val result = urlTestNode(node, clashApiPort)
+                    val result = urlTestNode(node, clashApiPort, targetUrl, timeoutMs, retryCount)
                     val current = completedCount.incrementAndGet()
                     onProgress?.invoke(current, totalCount)
                     result

@@ -2,7 +2,6 @@ package xyz.a202132.app.viewmodel
 
 import android.app.Application
 import android.content.Intent
-import android.net.Uri
 import android.util.Log
 import com.google.gson.Gson
 import androidx.lifecycle.AndroidViewModel
@@ -40,6 +39,7 @@ import xyz.a202132.app.service.ServiceManager
 import xyz.a202132.app.util.NetworkUtils
 import xyz.a202132.app.util.UnlockTestsRunner
 import xyz.a202132.app.util.CryptoUtils
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
@@ -62,6 +62,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val subscriptionParser = SubscriptionParser()
     private val latencyTester = LatencyTester()
     private val gson = Gson()
+
+    private data class NodeIpInfoAttemptResult(
+        val result: Result<NodeIpInfo>,
+        val shouldRetry: Boolean
+    )
     
     // 节流控制
     private val THROTTLE_INTERVAL = 5000L // 5秒节流间隔
@@ -77,9 +82,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     private val _isTesting = MutableStateFlow(false)
     val isTesting = _isTesting.asStateFlow()
-    
-    private val _showNodeList = MutableStateFlow(false)
-    val showNodeList = _showNodeList.asStateFlow()
     
     // 测试类型标签 (用于 UI 显示)
     private val _testingLabel = MutableStateFlow<String?>(null)
@@ -198,6 +200,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val preferTestSelectedModeId = settingsRepository.preferTestSelectedModeId.stateIn(viewModelScope, SharingStarted.Lazily, BUILTIN_PREFER_MODE_CHAT)
     val startupDefaultTestMode = settingsRepository.startupDefaultTestMode.stateIn(viewModelScope, SharingStarted.Lazily, StartupDefaultTestMode.NONE)
     val nodeIpInfoTestOnVpnStart = settingsRepository.nodeIpInfoTestOnVpnStart.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val tcpingTestTimeoutMs = settingsRepository.tcpingTestTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.TCPING_TEST_TIMEOUT)
+    val urlTestTimeoutMs = settingsRepository.urlTestTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.URL_TEST_TIMEOUT)
+    val nodeIpInfoTimeoutMs = settingsRepository.nodeIpInfoTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.NODE_IP_INFO_TIMEOUT_MS)
+    val speedTestDownloadTimeoutMs = settingsRepository.speedTestDownloadTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS)
+    val tcpingConcurrency = settingsRepository.tcpingConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.TCPING_CONCURRENCY)
+    val urlTestConcurrency = settingsRepository.urlTestConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.URL_TEST_CONCURRENCY)
+    val unlockTestConcurrency = settingsRepository.unlockTestConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY)
+    val vpnMtu = settingsRepository.vpnMtu.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.VPN_MTU)
     
     val vpnState = ServiceManager.vpnState
     
@@ -731,7 +741,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 Log.d(tag, "URL Testing ${currentNodes.size} nodes via ClashAPI (port=$clashApiPort)")
                 
-                val results = latencyTester.urlTestAllNodes(currentNodes, clashApiPort) { completed, total ->
+                val results = latencyTester.urlTestAllNodes(
+                    nodes = currentNodes,
+                    clashApiPort = clashApiPort,
+                    targetUrl = AppConfig.URL_TEST_URL,
+                    timeoutMs = urlTestTimeoutMs.value,
+                    concurrency = urlTestConcurrency.value
+                ) { completed, total ->
                     _testingLabel.value = "URL Test 测试中 ($completed/$total)"
                     onProgress?.invoke(completed, total)
                 }
@@ -780,24 +796,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * 打开节点列表并开始指定类型的测试
      */
-    fun showNodeListForTest(testType: String) {
+    fun showNodeListForTest(testType: String): Boolean {
         if (GlobalTestExecution.isFetching()) {
             _error.value = GlobalTestExecution.fetchingHint()
-            return
+            return false
         }
         if (_autoTestProgress.value.running || _isTesting.value || GlobalTestExecution.mutex.isLocked) {
             _error.value = GlobalTestExecution.busyHint()
-            return
+            return false
         }
         if (testType != "tcping" && testType != "urltest") {
-            return
+            return false
         }
 
-        _showNodeList.value = true
         when (testType) {
             "tcping" -> testAllNodes()
             "urltest" -> urlTestAllNodes()
         }
+        return true
     }
 
     fun setStartupDefaultTestMode(mode: StartupDefaultTestMode) {
@@ -814,6 +830,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setNodeIpInfoTestOnVpnStart(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setNodeIpInfoTestOnVpnStart(enabled)
+        }
+    }
+
+    fun setTcpingTestTimeoutMs(value: Long) {
+        viewModelScope.launch {
+            settingsRepository.setTcpingTestTimeoutMs(value)
+        }
+    }
+
+    fun setUrlTestTimeoutMs(value: Long) {
+        viewModelScope.launch {
+            settingsRepository.setUrlTestTimeoutMs(value)
+        }
+    }
+
+    fun setNodeIpInfoTimeoutMs(value: Long) {
+        viewModelScope.launch {
+            settingsRepository.setNodeIpInfoTimeoutMs(value)
+        }
+    }
+
+    fun setSpeedTestDownloadTimeoutMs(value: Long) {
+        viewModelScope.launch {
+            settingsRepository.setSpeedTestDownloadTimeoutMs(value)
+        }
+    }
+
+    fun setTcpingConcurrency(value: Int) {
+        viewModelScope.launch {
+            settingsRepository.setTcpingConcurrency(value)
+        }
+    }
+
+    fun setUrlTestConcurrency(value: Int) {
+        viewModelScope.launch {
+            settingsRepository.setUrlTestConcurrency(value)
+        }
+    }
+
+    fun setUnlockTestConcurrency(value: Int) {
+        viewModelScope.launch {
+            settingsRepository.setUnlockTestConcurrency(value)
+        }
+    }
+
+    fun setVpnMtu(value: Int) {
+        viewModelScope.launch {
+            settingsRepository.setVpnMtu(value)
         }
     }
 
@@ -863,7 +927,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         // 统一使用 Socket 测试 (直接连接节点服务器测试可达性)
         // 即使 VPN 运行中也可以工作，因为测试的是节点服务器本身
-        val results = latencyTester.testAllNodes(currentNodes, onProgress)
+        val results = latencyTester.testAllNodes(
+            nodes = currentNodes,
+            timeoutMs = tcpingTestTimeoutMs.value,
+            concurrency = tcpingConcurrency.value,
+            onProgress = onProgress
+        )
         Log.d(tag, "Got ${results.size} test results")
         
         // 更新数据库
@@ -1064,7 +1133,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectNode(node: Node) {
         viewModelScope.launch {
             settingsRepository.setSelectedNodeId(node.id)
-            _showNodeList.value = false
             
             // If VPN is connected, restart to switch to new node
             if (vpnState.value == VpnState.CONNECTED) {
@@ -1163,7 +1231,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         result.onSuccess { noticeInfo ->
-            // Always update config for features like Backup Node
             _noticeConfig.value = noticeInfo
 
             if (noticeInfo.hasNotice) {
@@ -1248,14 +1315,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun openDownloadUrl() {
         updateInfo.value?.let { info ->
-            // 使用 DownloadManager 检查文件是否已下载且有效。
+            // 使用 DownloadManager 检查文件是否已下载且有效
             val existingFile = DownloadManager.isApkReady(getApplication(), info.version)
             if (existingFile != null) {
-                // 确定是否需要先显示权限对话框（通过 UI 中的状态进行处理）
-                // 但由于我们想要触发安装，可以将状态设置为“已完成”
-                // 但是，UI 会监听状态更改。
-                // 如果状态已经是“已完成”，则不会触发任何更改。
-                // 我们应该在此处强制执行 installApk 逻辑。
+                // 此处强制执行 installApk 逻辑
                 installApk()
                 return
             }
@@ -1327,14 +1390,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     // 用户界面操作
-    fun showNodeList() {
-        _showNodeList.value = true
-    }
-    
-    fun hideNodeList() {
-        _showNodeList.value = false
-    }
-    
     fun resetFilter() {
         _filterUnavailable.value = false
     }
@@ -1791,7 +1846,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (config.unlockEnabled && workingNodes.isNotEmpty()) {
-                    val unlockConcurrency = AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY.coerceAtLeast(1)
+                    val unlockConcurrency = unlockTestConcurrency.value.coerceAtLeast(1)
                     _autoTestProgress.value = AutoTestProgress(
                         running = true,
                         stage = AutoTestStage.UNLOCK_TEST,
@@ -2062,38 +2117,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         try {
             val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", port))
+            val timeoutMs = nodeIpInfoTimeoutMs.value.coerceAtLeast(1000L)
             val client = NetworkClient.withUserAgent(OkHttpClient.Builder())
                 .proxy(proxy)
-                .connectTimeout(AppConfig.NODE_IP_INFO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .readTimeout(AppConfig.NODE_IP_INFO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .writeTimeout(AppConfig.NODE_IP_INFO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .writeTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .build()
 
-            val request = Request.Builder()
-                .url(AppConfig.NODE_IP_INFO_URL)
-                .get()
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        IllegalStateException("请求失败: HTTP ${response.code}")
-                    )
+            var lastResult: Result<NodeIpInfo> = Result.failure(IllegalStateException("节点 IP 信息请求失败"))
+            repeat(AppConfig.NODE_IP_INFO_RETRY_COUNT.coerceAtLeast(0) + 1) { attempt ->
+                val attemptResult = fetchNodeIpInfoOnce(node, client)
+                lastResult = attemptResult.result
+                if (lastResult.isSuccess || !attemptResult.shouldRetry || attempt >= AppConfig.NODE_IP_INFO_RETRY_COUNT) {
+                    return@withContext lastResult
                 }
-                val body = response.body?.string().orEmpty()
-                if (body.isBlank()) {
-                    return@withContext Result.failure(IllegalStateException("接口返回为空"))
-                }
-                val parsed = gson.fromJson(body, NodeIpInfo::class.java)
-                    ?: return@withContext Result.failure(IllegalStateException("解析 IP 信息失败"))
-                Result.success(parsed)
+                Log.w(
+                    tag,
+                    "Node IP info retry ${attempt + 1}/${AppConfig.NODE_IP_INFO_RETRY_COUNT}: ${node.getDisplayName()} (${node.id})"
+                )
+                delay(300)
             }
+
+            lastResult
         } catch (e: Exception) {
             Log.e(tag, "Fetch node IP info failed for ${node.getDisplayName()}: ${e.message}")
             Result.failure(e)
         } finally {
             session.stop()
         }
+    }
+
+    private fun fetchNodeIpInfoOnce(
+        node: Node,
+        client: OkHttpClient
+    ): NodeIpInfoAttemptResult {
+        return try {
+            val request = Request.Builder()
+                .url(AppConfig.NODE_IP_INFO_URL)
+                .header("Accept", "application/json")
+                .header("Cache-Control", "no-cache")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val retryable = response.code in listOf(429, 500, 502, 503, 504)
+                    val error = IllegalStateException("请求失败: HTTP ${response.code}")
+                    NodeIpInfoAttemptResult(Result.failure(error), retryable)
+                } else {
+                    val body = response.body?.string().orEmpty()
+                    if (body.isBlank()) {
+                        NodeIpInfoAttemptResult(
+                            Result.failure(IllegalStateException("接口返回为空")),
+                            shouldRetry = false
+                        )
+                    } else {
+                        val parsed = gson.fromJson(body, NodeIpInfo::class.java)
+                        if (parsed == null || parsed.ip.isBlank()) {
+                            NodeIpInfoAttemptResult(
+                                Result.failure(IllegalStateException("解析 IP 信息失败")),
+                                shouldRetry = false
+                            )
+                        } else {
+                            NodeIpInfoAttemptResult(Result.success(parsed), shouldRetry = false)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Fetch node IP info attempt failed for ${node.getDisplayName()}: ${e.message}")
+            NodeIpInfoAttemptResult(Result.failure(e), shouldRetry = shouldRetryNodeIpInfo(e))
+        }
+    }
+
+    private fun shouldRetryNodeIpInfo(error: Exception): Boolean {
+        return error is IOException // 涵盖 SocketTimeoutException、InterruptedIOException 等
     }
 
     private suspend fun testNodeDownloadBandwidthMbps(node: Node, sizeMb: Int): Float = withContext(Dispatchers.IO) {
@@ -2107,8 +2207,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .proxy(proxy)
                 .connectTimeout(12, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
-            if (AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS > 0L) {
-                builder.callTimeout(AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            if (speedTestDownloadTimeoutMs.value > 0L) {
+                builder.callTimeout(speedTestDownloadTimeoutMs.value, TimeUnit.MILLISECONDS)
             }
             val client = builder.build()
 

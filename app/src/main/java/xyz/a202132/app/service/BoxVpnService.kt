@@ -170,14 +170,19 @@ class BoxVpnService : VpnService() {
                 } catch (e: Exception) {
                     xyz.a202132.app.data.model.IPv6RoutingMode.DISABLED  // 默认禁用
                 }
+                val vpnMtu = try {
+                    settingsRepo.vpnMtu.first()
+                } catch (e: Exception) {
+                    AppConfig.VPN_MTU
+                }
                 
-                Log.d(TAG, "Generating config with ${allNodes.size} nodes, selected: $selectedNodeId, bypassLan: $bypassLan, ipv6Mode: $ipv6Mode")
+                Log.d(TAG, "Generating config with ${allNodes.size} nodes, selected: $selectedNodeId, bypassLan: $bypassLan, ipv6Mode: $ipv6Mode, mtu: $vpnMtu")
 
                 // 3. 确保规则集文件存在（从 assets 拷贝兜底）
                 RuleManager.ensureRuleSets(application)
 
                 // 4. 生成sing-box配置
-                val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode)
+                val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu)
                 deleteLegacyConfigFile()
                 logConfigForDebug(config)
 
@@ -732,6 +737,11 @@ class BoxVpnService : VpnService() {
                     } catch (e: Exception) {
                         xyz.a202132.app.data.model.IPv6RoutingMode.DISABLED
                     }
+                    val vpnMtu = try {
+                        settingsRepo.vpnMtu.first()
+                    } catch (e: Exception) {
+                        AppConfig.VPN_MTU
+                    }
 
                     // 获取选中的节点
                     val selectedNodeId = try {
@@ -743,7 +753,7 @@ class BoxVpnService : VpnService() {
                     // 确保规则集文件存在
                     RuleManager.ensureRuleSets(application)
                     
-                    val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode)
+                    val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu)
                     deleteLegacyConfigFile()
                     logConfigForDebug(config)
 

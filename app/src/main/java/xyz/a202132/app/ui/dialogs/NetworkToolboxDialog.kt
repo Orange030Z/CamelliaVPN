@@ -3,14 +3,32 @@ package xyz.a202132.app.ui.dialogs
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.GpsFixed
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.LocationSearching
+import androidx.compose.material.icons.outlined.Masks
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.TravelExplore
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -23,112 +41,64 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.NetworkTool
+import xyz.a202132.app.ui.components.AppScreenScaffold
 import xyz.a202132.app.ui.theme.Primary
 
-/**
- * 网络工具箱对话框
- */
 @Composable
-fun NetworkToolboxDialog(
-    onDismiss: () -> Unit
+fun NetworkToolboxScreen(
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val tools = remember { AppConfig.getNetworkTools() }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    AppScreenScaffold(
+        title = "网络工具箱",
+        subtitle = "常用网络检测与查询工具",
+        onBack = onBack
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.78f),
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 28.dp)
-            ) {
-                // 标题区域
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Construction,
-                        contentDescription = null,
-                        tint = Primary,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "网络工具箱",
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "常用网络检测与查询工具",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 工具网格
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(tools) { tool ->
-                        NetworkToolCard(
-                            tool = tool,
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(tool.url))
-                                context.startActivity(intent)
-                            }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 关闭按钮
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Primary)
-                ) {
-                    Text(
-                        text = "关闭",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
+        NetworkToolboxContent(
+            onOpenTool = { tool ->
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(tool.url))
+                context.startActivity(intent)
             }
-        }
+        )
     }
 }
 
-/**
- * 单个网络工具卡片
- */
+@Composable
+private fun NetworkToolboxContent(
+    onOpenTool: (NetworkTool) -> Unit
+) {
+    val tools = remember { AppConfig.getNetworkTools() }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(tools) { tool ->
+                NetworkToolCard(
+                    tool = tool,
+                    onClick = { onOpenTool(tool) }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "点击卡片后会使用系统浏览器打开对应站点",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
 @Composable
 private fun NetworkToolCard(
     tool: NetworkTool,
@@ -137,28 +107,28 @@ private fun NetworkToolCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable { onClick() },
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(18.dp)
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 16.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
                 imageVector = getToolIcon(tool.icon),
                 contentDescription = tool.name,
-                tint = Primary,
-                modifier = Modifier.size(32.dp)
+                tint = Primary
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
                 text = tool.name,
-                fontSize = 14.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
@@ -166,9 +136,8 @@ private fun NetworkToolCard(
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // 显示简化的域名
             Text(
                 text = Uri.parse(tool.url).host ?: tool.url,
                 fontSize = 11.sp,
@@ -181,9 +150,6 @@ private fun NetworkToolCard(
     }
 }
 
-/**
- * 根据图标标识获取 Material Icon
- */
 private fun getToolIcon(iconKey: String): ImageVector {
     return when (iconKey) {
         "outbound" -> Icons.Outlined.TravelExplore

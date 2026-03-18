@@ -193,8 +193,9 @@ class SubscriptionParser {
         val normalizedLink = link.replace("hy2://", "hysteria2://")
         val uri = Uri.parse(normalizedLink)
         val name = URLDecoder.decode(uri.fragment ?: "Hysteria2 Node", "UTF-8")
-        val server = uri.host ?: ""
-        val port = if (uri.port == -1) 443 else uri.port
+        val endpoint = parseHysteria2Endpoint(normalizedLink)
+        val server = endpoint.first ?: (uri.host ?: "")
+        val port = endpoint.second ?: if (uri.port == -1) 443 else uri.port
         
         return Node(
             id = generateId(link),
@@ -368,5 +369,38 @@ class SubscriptionParser {
         val md = MessageDigest.getInstance("MD5")
         val digest = md.digest(link.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun parseHysteria2Endpoint(link: String): Pair<String?, Int?> {
+        val authority = link.substringAfter("@", "").substringBefore("?").substringBefore("#").trim()
+        if (authority.isEmpty()) return null to null
+
+        return if (authority.startsWith("[")) {
+            val endBracket = authority.indexOf(']')
+            if (endBracket <= 0) {
+                null to null
+            } else {
+                val host = authority.substring(1, endBracket)
+                val portSpec = authority.substring(endBracket + 1).removePrefix(":")
+                host to parseFirstPort(portSpec)
+            }
+        } else {
+            val lastColon = authority.lastIndexOf(':')
+            if (lastColon <= 0) {
+                authority to null
+            } else {
+                val host = authority.substring(0, lastColon)
+                val portSpec = authority.substring(lastColon + 1)
+                host to parseFirstPort(portSpec)
+            }
+        }
+    }
+
+    private fun parseFirstPort(portSpec: String): Int? {
+        return portSpec
+            .substringBefore(",")
+            .substringBefore("-")
+            .trim()
+            .toIntOrNull()
     }
 }

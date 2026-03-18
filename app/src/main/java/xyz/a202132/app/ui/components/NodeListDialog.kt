@@ -1,8 +1,20 @@
 package xyz.a202132.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -13,7 +25,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,28 +44,121 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import xyz.a202132.app.data.model.LatencyLevel
 import xyz.a202132.app.data.model.Node
-import xyz.a202132.app.ui.theme.*
+import xyz.a202132.app.ui.theme.LatencyBad
+import xyz.a202132.app.ui.theme.LatencyGood
+import xyz.a202132.app.ui.theme.LatencyMedium
+import xyz.a202132.app.ui.theme.Primary
 
 @Composable
-fun NodeListDialog(
+fun NodeListScreen(
     nodes: List<Node>,
     selectedNodeId: String?,
     isTesting: Boolean,
     testingLabel: String? = null,
     onNodeSelected: (Node) -> Unit,
     onRefresh: () -> Unit,
-    onDismiss: () -> Unit
+    onBack: () -> Unit
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var keyword by remember { mutableStateOf("") }
+    var isClosing by remember { mutableStateOf(false) }
+
+    val handleBack = {
+        if (!isClosing) {
+            isClosing = true
+            onBack()
+        }
+    }
+
+    val handleNodeSelected: (Node) -> Unit = { node ->
+        if (!isClosing) {
+            isClosing = true
+            onNodeSelected(node)
+        }
+    }
+
+    AppScreenScaffold(
+        title = "节点列表",
+        subtitle = testingLabel,
+        onBack = handleBack,
+        backEnabled = !isClosing,
+        actions = {
+            NodeListTopActions(
+                showSearch = showSearch,
+                enabled = !isClosing,
+                onToggleSearch = {
+                    if (isClosing) return@NodeListTopActions
+                    showSearch = !showSearch
+                    if (!showSearch) {
+                        keyword = ""
+                    }
+                },
+                onRefresh = onRefresh
+            )
+        }
+    ) {
+        NodeListContent(
+            nodes = nodes,
+            selectedNodeId = selectedNodeId,
+            isTesting = isTesting,
+            showSearch = showSearch,
+            keyword = keyword,
+            onKeywordChange = { keyword = it },
+            onNodeSelected = handleNodeSelected,
+            interactionEnabled = !isClosing,
+        )
+    }
+}
+
+@Composable
+private fun NodeListTopActions(
+    showSearch: Boolean,
+    enabled: Boolean,
+    onToggleSearch: () -> Unit,
+    onRefresh: () -> Unit
+) {
+    IconButton(
+        onClick = onToggleSearch,
+        enabled = enabled
+    ) {
+        Icon(
+            imageVector = Icons.Default.Search,
+            contentDescription = "搜索",
+            tint = if (showSearch) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+    }
+    IconButton(
+        onClick = onRefresh,
+        enabled = enabled
+    ) {
+        Icon(
+            imageVector = Icons.Default.Refresh,
+            contentDescription = "刷新",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun NodeListContent(
+    nodes: List<Node>,
+    selectedNodeId: String?,
+    isTesting: Boolean,
+    showSearch: Boolean,
+    keyword: String,
+    onKeywordChange: (String) -> Unit,
+    onNodeSelected: (Node) -> Unit,
+    interactionEnabled: Boolean,
+) {
     var frozenNodeOrderIds by remember { mutableStateOf<List<String>?>(null) }
     var wasTesting by remember { mutableStateOf(isTesting) }
     var pendingScrollToTop by remember { mutableStateOf(false) }
@@ -99,164 +210,99 @@ fun NodeListDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .fillMaxHeight(0.7f),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // 标题栏
-                Row(
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (isTesting) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        if (showSearch) {
+            OutlinedTextField(
+                value = keyword,
+                onValueChange = onKeywordChange,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("输入关键词搜索节点") },
+                trailingIcon = {
+                    if (keyword.isNotEmpty()) {
+                        IconButton(
+                            onClick = { onKeywordChange("") },
+                            enabled = interactionEnabled
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "清空")
+                        }
+                    }
+                }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        when {
+            nodes.isEmpty() -> {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column {
-                        Text(
-                            text = "节点列表",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        // 测试类型标签
-                        if (testingLabel != null) {
-                            Text(
-                                text = testingLabel,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                showSearch = !showSearch
-                                if (!showSearch) {
-                                    keyword = ""
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "搜索",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // 刷新按钮
-                        IconButton(
-                            onClick = onRefresh
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "刷新",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        
-                        // 关闭按钮
-                        IconButton(onClick = onDismiss) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "关闭",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-                
-                // 测试进度条
-                if (isTesting) {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    Divider(color = MaterialTheme.colorScheme.outline)
-                }
-
-                if (showSearch) {
-                    OutlinedTextField(
-                        value = keyword,
-                        onValueChange = { keyword = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        singleLine = true,
-                        placeholder = { Text("输入关键字检索节点") },
-                        trailingIcon = {
-                            if (keyword.isNotEmpty()) {
-                                IconButton(onClick = { keyword = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "清空")
-                                }
-                            }
-                        }
+                    Text(
+                        text = if (isTesting) "正在获取节点..." else "暂无可用节点",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp
                     )
                 }
-                
-                // 节点列表
-                if (nodes.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (isTesting) "正在获取节点..." else "暂无可用节点",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 16.sp
+            }
+
+            filteredNodes.isEmpty() -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "未找到匹配节点",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+
+            else -> {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(
+                        items = filteredNodes,
+                        key = { it.id }
+                    ) { node ->
+                        NodeListItem(
+                            node = node,
+                            isSelected = node.id == selectedNodeId,
+                            isTesting = isTesting,
+                            enabled = interactionEnabled,
+                            onClick = { onNodeSelected(node) }
                         )
-                    }
-                } else {
-                    if (filteredNodes.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "未找到匹配节点",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 16.sp
-                            )
-                        }
-                    } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(
-                                items = filteredNodes,
-                                key = { it.id }
-                            ) { node ->
-                                NodeListItem(
-                                    node = node,
-                                    isSelected = node.id == selectedNodeId,
-                                    isTesting = isTesting,
-                                    onClick = { onNodeSelected(node) }
-                                )
-                            }
-                        }
                     }
                 }
             }
+        }
+
+        if (!interactionEnabled) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { }
+            )
         }
     }
 }
@@ -266,19 +312,21 @@ private fun NodeListItem(
     node: Node,
     isSelected: Boolean,
     isTesting: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit
 ) {
-    val backgroundColor = if (isSelected) Primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+    val backgroundColor =
+        if (isSelected) Primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
     val borderColor = if (isSelected) Primary else Color.Transparent
-    
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() },
+            .clickable(enabled = enabled) { onClick() },
         color = backgroundColor,
         shape = RoundedCornerShape(12.dp),
-        border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, borderColor) else null
+        border = if (isSelected) BorderStroke(2.dp, borderColor) else null
     ) {
         Row(
             modifier = Modifier
@@ -291,25 +339,26 @@ private fun NodeListItem(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                // 国旗
                 Text(
                     text = node.getFlagEmoji(),
                     fontSize = 24.sp,
                     modifier = Modifier.padding(end = 12.dp)
                 )
-                
+
                 Column {
-                    // 节点名称
                     Text(
                         text = node.getDisplayName(),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (node.isAvailable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (node.isAvailable) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    
-                    // 协议类型
+
                     Text(
                         text = node.type.protocol.uppercase(),
                         fontSize = 12.sp,
@@ -317,15 +366,13 @@ private fun NodeListItem(
                     )
                 }
             }
-            
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 延迟
                 LatencyBadge(node = node, isTesting = isTesting)
-                
-                // 选中标记
+
                 if (isSelected) {
                     Box(
                         modifier = Modifier
@@ -353,7 +400,7 @@ fun LatencyBadge(node: Node, isTesting: Boolean = false) {
         LatencyLevel.MEDIUM -> LatencyMedium
         LatencyLevel.BAD -> LatencyBad
     }
-    
+
     Surface(
         color = latencyColor.copy(alpha = 0.15f),
         shape = RoundedCornerShape(6.dp)

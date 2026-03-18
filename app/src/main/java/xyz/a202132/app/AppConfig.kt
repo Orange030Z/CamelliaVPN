@@ -29,12 +29,12 @@ data class UnlockPrioritySite(
  * 应用配置常量
  */
 object AppConfig {
-    const val STARTUP_SPLASH_DURATION_SECONDS = 5 // 启动图倒计时时长，设为0则不启用
+    const val STARTUP_SPLASH_DURATION_SECONDS = 10 // 启动图倒计时时长，设为0则不启用
 
     // API URLs
     const val SUBSCRIPTION_URL = "https://your-server.com/api/nodes" // 订阅URL
-    const val UPDATE_URL = "https://your-server.com/api//update" // 检查更新URL
-    const val NOTICE_URL = "https://your-server.com/api//notice" // 公告通知URL
+    const val UPDATE_URL = "https://your-server.com/api/update" // 检查更新URL
+    const val NOTICE_URL = "https://your-server.com/api/notice" // 公告通知URL
     const val WEBSITE_URL = "https://your-website.com" // 官网网站
 
     // API timeout (milliseconds) for retry-controlled requests
@@ -53,6 +53,7 @@ object AppConfig {
     
     const val URL_TEST_URL = "https://www.google.com/generate_204" // URL Test测试URL
     const val URL_TEST_TIMEOUT = 3000L // URL Test 超时（毫秒）
+    const val URL_TEST_RETRY_COUNT = 1 // URL Test 自动重试次数，仅对503/504或异常生效
     
     // Concurrency
     const val TCPING_CONCURRENCY = 16 // TCPing并发数
@@ -75,6 +76,7 @@ object AppConfig {
     // 节点IP信息
     const val NODE_IP_INFO_URL = "https://my.ippure.com/v1/info"
     const val NODE_IP_INFO_TIMEOUT_MS = 12000L // 单次节点IP信息查询超时（毫秒）
+    const val NODE_IP_INFO_RETRY_COUNT = 1 // 节点IP信息自动重试次数，仅对超时、网络异常或服务端临时错误生效
 
     // Network Toolbox - 网络工具箱
     const val NETWORK_TOOLS_JSON = """

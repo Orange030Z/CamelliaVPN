@@ -1,376 +1,146 @@
 package xyz.a202132.app.ui.dialogs
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.ui.text.input.KeyboardType
 import xyz.a202132.app.data.model.Node
 import xyz.a202132.app.viewmodel.UnlockNodeResult
 import xyz.a202132.app.viewmodel.UnlockResultStatus
-import xyz.a202132.app.viewmodel.UnlockTestViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @Composable
-fun UnlockTestDialog(
-    visibleNodes: List<Node>,
-    onDismiss: () -> Unit,
-    viewModel: UnlockTestViewModel = viewModel()
+internal fun UnlockNodeSelectionPane(
+    modifier: Modifier,
+    filteredDisplayNodes: List<Node>,
+    selected: Set<String>,
+    isRunning: Boolean,
+    nodeListState: LazyListState,
+    onToggleNode: (String) -> Unit
 ) {
-    val context = LocalContext.current
-    val nodes by viewModel.nodes.collectAsState()
-    val selected by viewModel.selectedNodeIds.collectAsState()
-    val isRunning by viewModel.isRunning.collectAsState()
-    val progressText by viewModel.progressText.collectAsState()
-    val results by viewModel.results.collectAsState()
-    val error by viewModel.error.collectAsState()
-    var detailDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var randomModeEnabled by remember { mutableStateOf(false) }
-    var randomNodeCountInput by remember { mutableStateOf("") }
-    var showSearch by remember { mutableStateOf(false) }
-    var keyword by remember { mutableStateOf("") }
-    val displayNodes = remember(nodes, selected) {
-        nodes.sortedByDescending { selected.contains(it.id) }
-    }
-    val filteredDisplayNodes = remember(displayNodes, keyword) {
-        val query = keyword.trim()
-        if (query.isBlank()) {
-            displayNodes
-        } else {
-            displayNodes.filter { node ->
-                node.getDisplayName().contains(query, ignoreCase = true) ||
-                    node.name.contains(query, ignoreCase = true) ||
-                    node.country?.contains(query, ignoreCase = true) == true
-            }
-        }
-    }
-    val nodeListState = rememberLazyListState()
-
-    LaunchedEffect(visibleNodes) {
-        viewModel.updateVisibleNodes(visibleNodes)
-    }
-
-    LaunchedEffect(nodes) {
-        if (nodes.isNotEmpty() && selected.isEmpty() && !randomModeEnabled) {
-            viewModel.setAllSelected(true)
-        }
-        val maxCount = nodes.size
-        val parsed = randomNodeCountInput.toIntOrNull()
-        if (parsed != null && parsed > maxCount) {
-            randomNodeCountInput = maxCount.toString()
-            if (randomModeEnabled) {
-                viewModel.selectRandomNodes(maxCount)
-            }
-        }
-    }
-
-    LaunchedEffect(error) {
-        error?.let {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            viewModel.clearError()
-        }
-    }
-
-    LaunchedEffect(filteredDisplayNodes) {
-        if (filteredDisplayNodes.isNotEmpty()) {
-            nodeListState.scrollToItem(0)
-        }
-    }
-
-    Dialog(
-        onDismissRequest = {
-            if (!isRunning) onDismiss()
-        },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
+    Column(modifier = modifier) {
+        Text(
+            text = "节点选择",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(6.dp))
         Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .fillMaxHeight(0.88f),
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
         ) {
-            Column(
+            LazyColumn(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                state = nodeListState
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text(
-                            text = "流媒体解锁测试",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "通过临时本地代理逐个测试所选节点",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Row {
-                        IconButton(
-                            onClick = {
-                                showSearch = !showSearch
-                                if (!showSearch) keyword = ""
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Search, contentDescription = "筛选节点")
-                        }
-                        IconButton(onClick = { if (!isRunning) onDismiss() }) {
-                            Icon(Icons.Outlined.Close, contentDescription = "关闭")
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Divider()
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (showSearch) {
-                    OutlinedTextField(
-                        value = keyword,
-                        onValueChange = { keyword = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("过滤节点关键字") },
-                        placeholder = { Text("名称 / 地区等") },
-                        enabled = !isRunning
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = nodes.isNotEmpty() && selected.size == nodes.size,
-                            onCheckedChange = { viewModel.setAllSelected(it) },
-                            enabled = !isRunning && !randomModeEnabled
-                        )
-                        Text("全选节点 (${selected.size}/${nodes.size})")
-                    }
-                    Button(
-                        onClick = {
-                            if (isRunning) viewModel.stopTests() else viewModel.startTests()
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isRunning) "停止" else "开始")
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                items(filteredDisplayNodes, key = { it.id }) { node ->
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isRunning) { onToggleNode(node.id) }
+                            .padding(vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Checkbox(
-                            checked = randomModeEnabled,
-                            onCheckedChange = { enabled ->
-                                randomModeEnabled = enabled
-                                if (!enabled) {
-                                    randomNodeCountInput = ""
-                                    viewModel.setAllSelected(true)
-                                } else {
-                                    viewModel.setAllSelected(false)
-                                }
-                            },
+                        androidx.compose.material3.Checkbox(
+                            checked = selected.contains(node.id),
+                            onCheckedChange = { onToggleNode(node.id) },
                             enabled = !isRunning
                         )
-                    }
-                    OutlinedTextField(
-                        value = randomNodeCountInput,
-                        onValueChange = { value ->
-                            val digits = value.filter { it.isDigit() }
-                            if (digits.isEmpty()) {
-                                randomNodeCountInput = ""
-                                if (randomModeEnabled) viewModel.selectRandomNodes(0)
-                                return@OutlinedTextField
-                            }
-                            val parsed = digits.toIntOrNull() ?: return@OutlinedTextField
-                            val clamped = parsed.coerceAtMost(nodes.size)
-                            randomNodeCountInput = clamped.toString()
-                            if (randomModeEnabled) {
-                                viewModel.selectRandomNodes(clamped)
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(60.dp),
-                        label = { Text("随机测试节点数") },
-                        singleLine = true,
-                        enabled = !isRunning && randomModeEnabled,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                    OutlinedButton(
-                        onClick = { viewModel.selectCurrentNodeOnly() },
-                        enabled = !isRunning,
-                        modifier = Modifier.height(60.dp)
-                    ) {
-                        Text("当前节点")
+                        Text(
+                            text = "${node.getFlagEmoji()} ${node.getDisplayName()}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
+            }
+        }
+    }
+}
 
-                if (isRunning) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-
-                progressText?.let {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(
-                    text = "节点选择",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    state = nodeListState
+@Composable
+internal fun UnlockResultPane(
+    modifier: Modifier,
+    results: List<UnlockNodeResult>,
+    onShowDetail: (title: String, content: String) -> Unit
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = "测试结果",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+        ) {
+            if (results.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    items(filteredDisplayNodes, key = { it.id }) { node ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !isRunning) { viewModel.toggleNode(node.id) }
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = selected.contains(node.id),
-                                onCheckedChange = { viewModel.toggleNode(node.id) },
-                                enabled = !isRunning
-                            )
-                            Text(
-                                text = "${node.getFlagEmoji()} ${node.getDisplayName()}",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    Text(
+                        text = "暂无结果",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                Divider()
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(
-                    text = "测试结果",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
+            } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(results, key = { it.nodeId }) { result ->
                         UnlockResultCard(
                             result = result,
-                            onShowDetail = { title, content ->
-                                detailDialog = title to content
-                            }
+                            onShowDetail = onShowDetail
                         )
                     }
                 }
             }
         }
     }
-
-    detailDialog?.let { (title, content) ->
-        UnlockResultDetailDialog(
-            title = title,
-            content = content,
-            onDismiss = { detailDialog = null }
-        )
-    }
 }
 
 @Composable
-private fun UnlockResultCard(
+internal fun UnlockResultCard(
     result: UnlockNodeResult,
     onShowDetail: (title: String, content: String) -> Unit
 ) {
@@ -413,7 +183,11 @@ private fun UnlockResultCard(
             }
 
             Spacer(modifier = Modifier.height(4.dp))
-            Text(text = result.summary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = result.summary,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             if (result.testedAt > 0L) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -438,16 +212,16 @@ private fun UnlockResultCard(
     }
 }
 
-private fun buildDetailInfo(result: UnlockNodeResult): String {
+internal fun buildDetailInfo(result: UnlockNodeResult): String {
     return result.rawOutput.ifBlank { result.summary }
 }
 
-private fun formatResultTime(timestamp: Long): String {
+internal fun formatResultTime(timestamp: Long): String {
     return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
 }
 
 @Composable
-private fun UnlockResultDetailDialog(
+internal fun UnlockResultDetailDialog(
     title: String,
     content: String,
     onDismiss: () -> Unit
@@ -460,7 +234,7 @@ private fun UnlockResultDetailDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
-                .fillMaxHeight(0.8f),
+                .fillMaxSize(0.8f),
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface
         ) {

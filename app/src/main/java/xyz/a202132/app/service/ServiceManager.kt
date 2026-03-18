@@ -50,7 +50,7 @@ object ServiceManager {
     
     /**
      * 准备VPN权限
-     * @return true if needs permission request, false if ready
+     * @return 若需请求权限，则为 true；若已就绪，则为 false
      */
     fun prepareVpn(activity: Activity): Boolean {
         val intent = VpnService.prepare(activity)

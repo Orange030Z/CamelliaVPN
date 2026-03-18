@@ -2,7 +2,6 @@ package xyz.a202132.app.service
 
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Log
 import io.nekohasekai.libbox.InterfaceUpdateListener

@@ -30,7 +30,7 @@ object NetworkClient {
     private val gson = GsonBuilder()
         .setLenient()
         .create()
-    
+
     // 订阅响应的字符串转换器
     private val stringConverterFactory = object : Converter.Factory() {
         override fun responseBodyConverter(
@@ -54,7 +54,7 @@ object NetworkClient {
         .build()
     
     val apiService: ApiService = retrofit.create(ApiService::class.java)
-    
+
     // OkHttpClient 用于延迟测试（更短的超时时间）
     val latencyTestClient = withUserAgent(OkHttpClient.Builder())
         .connectTimeout(5, TimeUnit.SECONDS)

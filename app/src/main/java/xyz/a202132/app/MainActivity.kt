@@ -2,7 +2,6 @@ package xyz.a202132.app
 
 import android.Manifest
 import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -11,7 +10,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
@@ -26,57 +28,57 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.delay
 import xyz.a202132.app.ui.components.StartupSplashOverlay
+import xyz.a202132.app.ui.components.NodeListScreen
+import xyz.a202132.app.ui.dialogs.NetworkToolboxScreen
+import xyz.a202132.app.ui.navigation.AppRoute
 import xyz.a202132.app.ui.screens.MainScreen
+import xyz.a202132.app.ui.screens.OtherConfigScreen
 import xyz.a202132.app.ui.screens.PerAppProxyScreen
+import xyz.a202132.app.ui.screens.UnlockTestScreen
 import xyz.a202132.app.ui.theme.FireflyVPNTheme
 import xyz.a202132.app.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
-    
+
     private var pendingVpnAction: (() -> Unit)? = null
-    
+
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            // VPN权限已授予，执行之前的操作
             pendingVpnAction?.invoke()
         } else {
-            Toast.makeText(this, "VPN权限被拒绝", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "VPN 权限被拒绝", Toast.LENGTH_SHORT).show()
         }
         pendingVpnAction = null
     }
-    
-    // 通知权限请求 (Android 13+)
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            // 权限已授予
-        }
-        // 不管是否授予，都继续运行应用
-    }
-    
+    ) { _ -> }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureEdgeToEdge()
-        
-        // 请求通知权限 (Android 13+)
         requestNotificationPermission()
-        
+
         setContent {
             FireflyVPNTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // 导航状态
-                    var showPerAppProxyScreen by remember { mutableStateOf(false) }
-                    
-                    // 获取 ViewModel (在顶层获取，以便在两个屏幕间共享逻辑)
                     val viewModel: MainViewModel = viewModel()
+                    val navController = rememberNavController()
+                    val nodes by viewModel.nodes.collectAsState()
+                    val selectedNodeId by viewModel.selectedNodeId.collectAsState()
+                    val isTesting by viewModel.isTesting.collectAsState()
+                    val testingLabel by viewModel.testingLabel.collectAsState()
                     val startupUpdateCheckCompleted by viewModel.startupUpdateCheckCompleted.collectAsState()
                     val splashDurationSeconds = AppConfig.STARTUP_SPLASH_DURATION_SECONDS.coerceAtLeast(0)
                     var splashCountdownSeconds by remember(splashDurationSeconds) {
@@ -102,52 +104,118 @@ class MainActivity : ComponentActivity() {
                         }
                         splashTimedOut = true
                     }
-                    
+
                     if (showStartupSplash) {
                         StartupSplashOverlay(
                             countdownSeconds = splashCountdownSeconds,
                             onSkip = { splashSkipped = true }
                         )
-                    } else if (showPerAppProxyScreen) {
-                        // 分应用代理设置界面
-                        PerAppProxyScreen(
-                            onBack = { hasChanges -> 
-                                showPerAppProxyScreen = false
-                                if (hasChanges) {
-                                    viewModel.restartVpnIfNeeded()
+                    } else {
+                        val navigateTo: (String) -> Unit = { route ->
+                            navController.navigate(route) {
+                                launchSingleTop = true
+                            }
+                        }
+
+                        NavHost(
+                            navController = navController,
+                            startDestination = AppRoute.MAIN
+                        ) {
+                            composable(AppRoute.MAIN) {
+                                MainScreen(
+                                    viewModel = viewModel,
+                                    onStartVpn = { action -> requestVpnPermission(action) },
+                                    onOpenPerAppProxy = { navigateTo(AppRoute.PER_APP_PROXY) },
+                                    onOpenNodeList = { navigateTo(AppRoute.NODE_LIST) },
+                                    onOpenNetworkToolbox = { navigateTo(AppRoute.NETWORK_TOOLBOX) },
+                                    onOpenUnlockTest = { navigateTo(AppRoute.UNLOCK_TEST) },
+                                    onOpenOtherConfig = { navigateTo(AppRoute.OTHER_CONFIG) }
+                                )
+                            }
+
+                            composable(AppRoute.PER_APP_PROXY) {
+                                var isLeavingPerAppProxy by remember { mutableStateOf(false) }
+
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    PerAppProxyScreen(
+                                        onBack = { hasChanges ->
+                                            if (isLeavingPerAppProxy) return@PerAppProxyScreen
+                                            isLeavingPerAppProxy = true
+                                            navController.popBackStack()
+                                            if (hasChanges) {
+                                                viewModel.restartVpnIfNeeded()
+                                            }
+                                        }
+                                    )
+
+                                    if (isLeavingPerAppProxy) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null
+                                                ) { }
+                                        )
+                                    }
                                 }
                             }
-                        )
-                    } else {
-                        // 主界面
-                        MainScreen(
-                            viewModel = viewModel,
-                            onStartVpn = { action ->
-                                requestVpnPermission(action)
-                            },
-                            onOpenPerAppProxy = { showPerAppProxyScreen = true }
-                        )
+
+                            composable(AppRoute.NODE_LIST) {
+                                NodeListScreen(
+                                    nodes = nodes,
+                                    selectedNodeId = selectedNodeId,
+                                    isTesting = isTesting,
+                                    testingLabel = testingLabel,
+                                    onNodeSelected = { node ->
+                                        viewModel.selectNode(node)
+                                        navController.popBackStack(AppRoute.MAIN, false)
+                                    },
+                                    onRefresh = { viewModel.refreshNodesWithDefaultTest() },
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.NETWORK_TOOLBOX) {
+                                NetworkToolboxScreen(
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.UNLOCK_TEST) {
+                                UnlockTestScreen(
+                                    visibleNodes = nodes,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.OTHER_CONFIG) {
+                                OtherConfigScreen(
+                                    viewModel = viewModel,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    
+
     private fun requestVpnPermission(action: () -> Unit) {
         val intent = android.net.VpnService.prepare(this)
         if (intent != null) {
             pendingVpnAction = action
             vpnPermissionLauncher.launch(intent)
         } else {
-            // 已有权限，直接执行
             action()
         }
     }
-    
+
     private fun requestNotificationPermission() {
-        // Android 13 (API 33) 及以上需要请求通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
+            if (
+                ContextCompat.checkSelfPermission(
                     this,
                     Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
@@ -156,7 +224,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    
+
     private fun configureEdgeToEdge() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
@@ -168,9 +236,4 @@ class MainActivity : ComponentActivity() {
         insetsController.isAppearanceLightStatusBars = false
         insetsController.isAppearanceLightNavigationBars = false
     }
-
-    override fun onDestroy() {
-        super.onDestroy()
-    }
 }
-

@@ -26,25 +26,32 @@ class SingBoxConfigGenerator {
      * @param bypassLan 是否绕过局域网
      * @param ipv6Mode IPv6 路由模式
      */
-    fun generateConfig(nodes: List<Node>, selectedNodeId: String?, proxyMode: ProxyMode, bypassLan: Boolean = true, ipv6Mode: IPv6RoutingMode = IPv6RoutingMode.DISABLED): String {
+    fun generateConfig(
+        nodes: List<Node>,
+        selectedNodeId: String?,
+        proxyMode: ProxyMode,
+        bypassLan: Boolean = true,
+        ipv6Mode: IPv6RoutingMode = IPv6RoutingMode.DISABLED,
+        mtu: Int = AppConfig.VPN_MTU
+    ): String {
         // 如果没有节点，生成一个空配置防止崩溃
         if (nodes.isEmpty()) {
             return generateEmptyConfig()
         }
 
         val config = JsonObject().apply {
-            // Extract unique domains from nodes (ignoring IPs) to prevent routing loops/DNS deadlocks
-            // Extract unique domains and IPs
+            // 从节点中提取唯一域名（忽略 IP 地址），以防止路由环路/DNS 死锁
+            // 提取唯一域名和 IP 地址
             val uniqueServers = nodes.map { it.server }.distinct()
             val ipRegex = Regex("^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
-            val ipv6Regex = Regex("([0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}") // Simple regex for IPv6 detection
+            val ipv6Regex = Regex("([0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}") // 用于 IPv6 检测的简单正则表达式
             
-            val nodeIPs = uniqueServers.filter { it.matches(ipRegex) || it.contains(":") } // Treat anything with : as potential IPv6
+            val nodeIPs = uniqueServers.filter { it.matches(ipRegex) || it.contains(":") } // 将任何包含“:”的内容视为潜在的 IPv6 地址。
             val nodeDomains = uniqueServers.filter { !it.matches(ipRegex) && !it.contains(":") }
                 
             add("log", createLogConfig())
             add("dns", createDnsConfig(proxyMode, nodeDomains, ipv6Mode))
-            add("inbounds", createInbounds(ipv6Mode))
+            add("inbounds", createInbounds(ipv6Mode, mtu))
             add("outbounds", createOutbounds(nodes, selectedNodeId))
             add("route", createRoute(proxyMode, nodeDomains, nodeIPs, bypassLan))
             add("experimental", createExperimental())
@@ -55,7 +62,7 @@ class SingBoxConfigGenerator {
     private fun generateEmptyConfig(): String {
         val config = JsonObject().apply {
             add("log", createLogConfig())
-            add("inbounds", createInbounds(IPv6RoutingMode.DISABLED))
+            add("inbounds", createInbounds(IPv6RoutingMode.DISABLED, AppConfig.VPN_MTU))
             add("outbounds", JsonArray().apply {
                 add(JsonObject().apply {
                     addProperty("type", "direct")
@@ -275,7 +282,7 @@ class SingBoxConfigGenerator {
         }
     }
     
-    private fun createInbounds(ipv6Mode: IPv6RoutingMode): JsonArray {
+    private fun createInbounds(ipv6Mode: IPv6RoutingMode, mtu: Int): JsonArray {
         return JsonArray().apply {
             add(JsonObject().apply {
                 addProperty("type", "tun")
@@ -290,7 +297,7 @@ class SingBoxConfigGenerator {
                     // 必须使用 /126 或更小掩码，因为 system stack 需要至少一个额外的 IPv6 地址用于网关/路由
                     addProperty("inet6_address", "2001:db8::1/126")
                 }
-                addProperty("mtu", AppConfig.VPN_MTU)
+                addProperty("mtu", mtu)
                 addProperty("auto_route", true)
                 addProperty("strict_route", true)
                 
@@ -410,15 +417,22 @@ class SingBoxConfigGenerator {
                     addProperty("enabled", true)
                     val sni = uri.getQueryParameter("sni") ?: uri.getQueryParameter("host")
                     addProperty("server_name", sni ?: node.server)
+                    val alpnValues = parseCsvParams(queryParamFirst(uri, "alpn"))
+                    if (alpnValues.isNotEmpty()) {
+                        add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
+                    }
                     if (security == "reality") {
                         add("reality", JsonObject().apply {
                             addProperty("enabled", true)
                             addProperty("public_key", uri.getQueryParameter("pbk") ?: "")
                             addProperty("short_id", uri.getQueryParameter("sid") ?: "")
                         })
+                    }
+                    val fingerprint = queryParamFirst(uri, "fp", "fingerprint", "client-fingerprint")
+                    if (!fingerprint.isNullOrBlank()) {
                         add("utls", JsonObject().apply {
                             addProperty("enabled", true)
-                            addProperty("fingerprint", uri.getQueryParameter("fp") ?: "chrome")
+                            addProperty("fingerprint", fingerprint)
                         })
                     }
                     addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
@@ -451,6 +465,10 @@ class SingBoxConfigGenerator {
                 add("tls", JsonObject().apply {
                     addProperty("enabled", true)
                     addProperty("server_name", vmessConfig.get("sni")?.asString ?: vmessConfig.get("host")?.asString ?: node.server)
+                    val alpnValues = parseJsonStringList(vmessConfig.get("alpn"))
+                    if (alpnValues.isNotEmpty()) {
+                        add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
+                    }
                     val insecureField = vmessConfig.get("allowInsecure") ?: vmessConfig.get("allow_insecure")
                     val isInsecure = when {
                         insecureField == null -> false
@@ -459,6 +477,15 @@ class SingBoxConfigGenerator {
                         else -> false
                     }
                     addProperty("insecure", isInsecure)
+                    val fingerprint = parseJsonString(vmessConfig.get("fp"))
+                        ?: parseJsonString(vmessConfig.get("fingerprint"))
+                        ?: parseJsonString(vmessConfig.get("client-fingerprint"))
+                    if (!fingerprint.isNullOrBlank()) {
+                        add("utls", JsonObject().apply {
+                            addProperty("enabled", true)
+                            addProperty("fingerprint", fingerprint)
+                        })
+                    }
                 })
             }
             
@@ -484,6 +511,17 @@ class SingBoxConfigGenerator {
                 addProperty("enabled", true)
                 val sni = uri.getQueryParameter("sni") ?: uri.getQueryParameter("host")
                 addProperty("server_name", sni ?: node.server)
+                val alpnValues = parseCsvParams(queryParamFirst(uri, "alpn"))
+                if (alpnValues.isNotEmpty()) {
+                    add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
+                }
+                val fingerprint = queryParamFirst(uri, "fp", "fingerprint", "client-fingerprint")
+                if (!fingerprint.isNullOrBlank()) {
+                    add("utls", JsonObject().apply {
+                        addProperty("enabled", true)
+                        addProperty("fingerprint", fingerprint)
+                    })
+                }
                 addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
             })
             
@@ -499,11 +537,16 @@ class SingBoxConfigGenerator {
         val normalizedLink = rawLink.replace("hy2://", "hysteria2://")
         val uri = Uri.parse(normalizedLink)
         val alpnValues = parseCsvParams(queryParamFirst(uri, "alpn"))
+        val serverPorts = parseHysteria2ServerPorts(normalizedLink)
         
         return JsonObject().apply {
             addProperty("type", "hysteria2")
             addProperty("server", node.server)
-            addProperty("server_port", node.port)
+            if (serverPorts.size > 1 || serverPorts.any { it.contains(":") }) {
+                add("server_ports", JsonArray().apply { serverPorts.forEach { add(it) } })
+            } else {
+                addProperty("server_port", serverPorts.firstOrNull()?.toIntOrNull() ?: node.port)
+            }
             addProperty("password", uri.userInfo ?: "")
             
             add("tls", JsonObject().apply {
@@ -512,6 +555,13 @@ class SingBoxConfigGenerator {
                 addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
                 if (alpnValues.isNotEmpty()) {
                     add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
+                }
+                val fingerprint = queryParamFirst(uri, "fp", "fingerprint", "client-fingerprint")
+                if (!fingerprint.isNullOrBlank()) {
+                    add("utls", JsonObject().apply {
+                        addProperty("enabled", true)
+                        addProperty("fingerprint", fingerprint)
+                    })
                 }
             })
             
@@ -571,7 +621,7 @@ class SingBoxConfigGenerator {
         val uri = Uri.parse(rawLink)
         val userInfo = uri.userInfo ?: ""
         val userInfoParts = userInfo.split(":", limit = 2)
-        val uuid = uri.getQueryParameter("uuid") ?: userInfoParts.getOrNull(0) ?: ""
+        val uuid = uri.getQueryParameter("uuid") ?: uri.getQueryParameter("id") ?: userInfoParts.getOrNull(0) ?: ""
         val password = uri.getQueryParameter("password")
             ?: uri.getQueryParameter("token")
             ?: userInfoParts.getOrNull(1)
@@ -675,6 +725,7 @@ class SingBoxConfigGenerator {
     
     private fun createShadowsocksOutbound(node: Node): JsonObject {
         val rawLink = node.getRawLinkPlain()
+        val uri = Uri.parse(rawLink)
         val linkContent = rawLink.removePrefix("ss://").substringBefore("#")
         val methodPassword = try {
             if (linkContent.contains("@")) {
@@ -690,6 +741,7 @@ class SingBoxConfigGenerator {
         val parts = methodPassword.split(":", limit = 2)
         val method = parts.getOrNull(0) ?: "aes-256-gcm"
         val password = parts.getOrNull(1) ?: ""
+        val pluginSpec = uri.getQueryParameter("plugin").orEmpty().trim()
         
         return JsonObject().apply {
             addProperty("type", "shadowsocks")
@@ -697,6 +749,16 @@ class SingBoxConfigGenerator {
             addProperty("server_port", node.port)
             addProperty("method", method)
             addProperty("password", password)
+            if (pluginSpec.isNotEmpty()) {
+                val pluginName = pluginSpec.substringBefore(";").trim()
+                val pluginOptions = pluginSpec.substringAfter(";", "").replace("\\=", "=").trim()
+                if (pluginName.isNotEmpty()) {
+                    addProperty("plugin", pluginName)
+                }
+                if (pluginOptions.isNotEmpty()) {
+                    addProperty("plugin_opts", pluginOptions)
+                }
+            }
         }
     }
 
@@ -774,6 +836,34 @@ class SingBoxConfigGenerator {
             .filter { it.isNotEmpty() }
     }
 
+    private fun parseJsonString(element: com.google.gson.JsonElement?): String? {
+        if (element == null || element.isJsonNull) return null
+        return runCatching {
+            if (element.isJsonPrimitive) {
+                element.asString.trim().takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
+        }.getOrNull()
+    }
+
+    private fun parseJsonStringList(element: com.google.gson.JsonElement?): List<String> {
+        if (element == null || element.isJsonNull) return emptyList()
+        return runCatching {
+            when {
+                element.isJsonArray -> {
+                    buildList {
+                        element.asJsonArray.forEach { item ->
+                            parseJsonString(item)?.let(::add)
+                        }
+                    }
+                }
+                element.isJsonPrimitive -> parseCsvParams(element.asString)
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private fun parseWireGuardReserved(rawValue: String?): List<Int>? {
         if (rawValue.isNullOrBlank()) {
             return null
@@ -783,6 +873,30 @@ class SingBoxConfigGenerator {
         return if (values.size == 3) values else null
     }
 
+    private fun parseHysteria2ServerPorts(link: String): List<String> {
+        val authority = link.substringAfter("@", "").substringBefore("?").substringBefore("#").trim()
+        if (authority.isEmpty()) return emptyList()
+
+        val portSpec = if (authority.startsWith("[")) {
+            authority.substringAfter("]", "").removePrefix(":")
+        } else {
+            authority.substringAfterLast(":", "")
+        }.trim()
+
+        if (portSpec.isEmpty()) return emptyList()
+
+        return portSpec.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { token ->
+                if ('-' in token) {
+                    token.replace("-", ":")
+                } else {
+                    token
+                }
+            }
+    }
+
     /**
      * 统一传输层别名，避免将订阅中的新字段原样下发给当前 libbox。
      * 当前内核不识别 xhttp，但二进制中包含 httpupgrade 能力，因此先降级映射。
@@ -790,6 +904,7 @@ class SingBoxConfigGenerator {
     private fun normalizeTransportType(type: String?): String {
         return when (type?.trim()?.lowercase()) {
             null, "", "tcp" -> "tcp"
+            "h2" -> "http"
             "xhttp" -> "httpupgrade"
             else -> type.trim().lowercase()
         }
@@ -829,12 +944,6 @@ class SingBoxConfigGenerator {
                     }
                 }
                 "grpc" -> addProperty("service_name", config.get("path")?.asString ?: "")
-                "h2" -> {
-                    addProperty("path", config.get("path")?.asString ?: "/")
-                    config.get("host")?.asString?.let {
-                        add("host", JsonArray().apply { add(it) })
-                    }
-                }
                 "http" -> {
                     addProperty("path", config.get("path")?.asString ?: "/")
                     config.get("host")?.asString?.let {
@@ -858,7 +967,7 @@ class SingBoxConfigGenerator {
             addProperty("outbound", "dns-out")
         })
         
-        // 2. 环回/私有 IP 地址 -> 直接l连接 (仅当 bypassLan 开启时)
+        // 2. 环回/私有 IP 地址 -> 直接连接 (仅当 bypassLan 开启时)
         if (bypassLan) {
             rules.add(JsonObject().apply {
                 addProperty("ip_is_private", true)

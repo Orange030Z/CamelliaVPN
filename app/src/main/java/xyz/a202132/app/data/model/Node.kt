@@ -46,18 +46,17 @@ data class Node(
      * 获取国旗emoji
      */
     fun getFlagEmoji(): String {
-        // 1. Try to find existing flag emoji in the name (Regional Indicator Symbol Pair)
+        // 1. 尝试在名称中查找现有的旗帜表情符号
         var i = 0
         while (i < name.length) {
             val codePoint = name.codePointAt(i)
-            // Check if current code point is a Regional Indicator Symbol (U+1F1E6 to U+1F1FF)
+            // 检查当前代码点是否为区域指示符（U+1F1E6 至 U+1F1FF）
             if (codePoint in 0x1F1E6..0x1F1FF) {
-                // Check next code point
+                // 检查下一个代码点
                 val charCount = Character.charCount(codePoint)
                 if (i + charCount < name.length) {
                     val nextCodePoint = name.codePointAt(i + charCount)
                     if (nextCodePoint in 0x1F1E6..0x1F1FF) {
-                        // Found a pair!
                         return String(Character.toChars(codePoint)) + String(Character.toChars(nextCodePoint))
                     }
                 }
@@ -65,7 +64,7 @@ data class Node(
             i += Character.charCount(codePoint)
         }
 
-        // 2. Fallback to generating from country code
+        // 2. 回退至根据国家代码生成
         if (country.isNullOrEmpty() || country.length != 2) {
             return "🌐"
         }
@@ -88,23 +87,20 @@ data class Node(
             val codePoint = name.codePointAt(i)
             val charCount = Character.charCount(codePoint)
             
-            // Check if current code point is a Regional Indicator Symbol (U+1F1E6 to U+1F1FF)
+            // 检查当前代码点是否为区域指示符（U+1F1E6 至 U+1F1FF）
             if (codePoint in 0x1F1E6..0x1F1FF) {
-                // Skip this character and potentially the next one if it's also a flag
+                // 跳过当前字符，如果下一个字符也是，则一并跳过。
                 if (i + charCount < name.length) {
                     val nextCodePoint = name.codePointAt(i + charCount)
                     if (nextCodePoint in 0x1F1E6..0x1F1FF) {
-                        // Skip both characters (the flag pair)
                         i += charCount + Character.charCount(nextCodePoint)
                         continue
                     }
                 }
-                // Single regional indicator, skip it
                 i += charCount
                 continue
             }
-            
-            // Keep this character
+
             result.append(String(Character.toChars(codePoint)))
             i += charCount
         }
