@@ -2,17 +2,51 @@ package xyz.a202132.app.ui.dialogs
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -23,9 +57,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.SpeedTestSize
+import xyz.a202132.app.data.model.Node
 import xyz.a202132.app.network.SpeedTestResult
 import xyz.a202132.app.network.SpeedTestService
+import xyz.a202132.app.network.UnlockTestManager
 import xyz.a202132.app.ui.theme.Primary
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.ServerSocket
 
 enum class SpeedTestPhase {
     CONFIG,
@@ -34,39 +73,52 @@ enum class SpeedTestPhase {
 }
 
 enum class SpeedTestDirection(val label: String) {
-    DOWNLOAD("下载测试"),
-    UPLOAD("上传测试"),
-    BOTH("双向测试 (先下后上)")
+    DOWNLOAD("下载测速"),
+    UPLOAD("上传测速"),
+    BOTH("双向测速（先下后上）")
+}
+
+private enum class SpeedTestTargetMode(val label: String) {
+    DIRECT("直连带宽"),
+    NODE("节点带宽")
 }
 
 @Composable
 fun SpeedTestDialog(
+    node: Node? = null,
+    useNodeBandwidth: Boolean = false,
     downloadTimeoutMs: Long = AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val service = remember(downloadTimeoutMs) { SpeedTestService(downloadTimeoutMs) }
-    
+    val targetMode = if (useNodeBandwidth && node != null) SpeedTestTargetMode.NODE else SpeedTestTargetMode.DIRECT
+
     var phase by remember { mutableStateOf(SpeedTestPhase.CONFIG) }
     var showConfirmDialog by remember { mutableStateOf(false) }
-    
-    // Config State
+    var activeService by remember { mutableStateOf<SpeedTestService?>(null) }
+
     val sizes = remember { AppConfig.getSpeedTestSizes() }
-    var selectedSize by remember { mutableStateOf(sizes.firstOrNull() ?: SpeedTestSize("10MB", 10000000)) }
+    var selectedSize by remember {
+        mutableStateOf(sizes.firstOrNull() ?: SpeedTestSize("10MB", 10_000_000))
+    }
     var selectedDirection by remember { mutableStateOf(SpeedTestDirection.DOWNLOAD) }
-    
-    // Test State
+
     var currentSpeed by remember { mutableFloatStateOf(0f) }
-    var progress by remember { mutableFloatStateOf(0f) } // 0.0 - 1.0 (每项测试)
-    var currentOperation by remember { mutableStateOf("") } // "正在下载..."
-    
-    // Results
+    var progress by remember { mutableFloatStateOf(0f) }
+    var currentOperation by remember { mutableStateOf("") }
+
     var downloadResult by remember { mutableStateOf<SpeedTestResult?>(null) }
     var uploadResult by remember { mutableStateOf<SpeedTestResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    
-    // Animation
+
     val animatedProgress by animateFloatAsState(targetValue = progress, label = "progress")
+
+    fun dismissDialog() {
+        activeService?.cancel()
+        UnlockTestManager.stop()
+        onDismiss()
+    }
 
     fun startTest() {
         phase = SpeedTestPhase.TESTING
@@ -75,58 +127,94 @@ fun SpeedTestDialog(
         uploadResult = null
         currentSpeed = 0f
         progress = 0f
-        
+
         scope.launch(Dispatchers.IO) {
+            var service: SpeedTestService? = null
+            var sessionStarted = false
             try {
+                val createdService = if (targetMode == SpeedTestTargetMode.NODE) {
+                    val targetNode = node ?: throw IllegalStateException("当前没有可用节点")
+                    val port = pickFreePort()
+                    if (!UnlockTestManager.start(context, targetNode, port)) {
+                        throw IllegalStateException("启动节点测速代理失败")
+                    }
+                    sessionStarted = true
+                    SpeedTestService(
+                        downloadTimeoutMs = downloadTimeoutMs,
+                        proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", port))
+                    )
+                } else {
+                    SpeedTestService(downloadTimeoutMs = downloadTimeoutMs)
+                }
+                service = createdService
+                withContext(Dispatchers.Main) {
+                    activeService = createdService
+                }
+
                 if (selectedDirection == SpeedTestDirection.DOWNLOAD || selectedDirection == SpeedTestDirection.BOTH) {
-                    withContext(Dispatchers.Main) { 
-                        currentOperation = "正在下载..." 
+                    withContext(Dispatchers.Main) {
+                        currentOperation = "正在下载..."
                         progress = 0f
                     }
-                    val result = service.startDownloadTest(selectedSize.bytes) { speed, prog ->
-                        // UI 更新时是否应该切换到主线程？Compose 状态的读取是线程安全的，但从后台线程修改 SnapshotState 可以吗？
-                        // 实际上最好使用 withContext 或保持代码简洁。
-                        // SnapshotState 可以从任何线程更新，但重新组合操作发生在 UI 线程上。
-                        currentSpeed = speed
-                        progress = prog
+                    val result = createdService.startDownloadTest(selectedSize.bytes) { speed, prog ->
+                        scope.launch {
+                            currentSpeed = speed
+                            progress = prog
+                        }
                     }
-                    downloadResult = result
+                    withContext(Dispatchers.Main) {
+                        downloadResult = result
+                    }
                 }
-                
+
                 if (selectedDirection == SpeedTestDirection.UPLOAD || selectedDirection == SpeedTestDirection.BOTH) {
-                    withContext(Dispatchers.Main) { 
-                        currentOperation = "正在上传..." 
+                    withContext(Dispatchers.Main) {
+                        currentOperation = "正在上传..."
                         progress = 0f
                         currentSpeed = 0f
                     }
-                    // Small delay between tests
                     kotlinx.coroutines.delay(500)
-                    
-                    val result = service.startUploadTest(selectedSize.bytes) { speed, prog ->
-                        currentSpeed = speed
-                        progress = prog
+
+                    val result = createdService.startUploadTest(selectedSize.bytes) { speed, prog ->
+                        scope.launch {
+                            currentSpeed = speed
+                            progress = prog
+                        }
                     }
-                    uploadResult = result
+                    withContext(Dispatchers.Main) {
+                        uploadResult = result
+                    }
                 }
-                
+
                 withContext(Dispatchers.Main) {
                     phase = SpeedTestPhase.RESULT
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    error = "测试失败: ${e.message}"
+                    error = "测速失败: ${e.message}"
                     phase = SpeedTestPhase.RESULT
+                }
+            } finally {
+                service?.cancel()
+                if (sessionStarted) {
+                    UnlockTestManager.stop()
+                }
+                withContext(Dispatchers.Main) {
+                    if (activeService === service) {
+                        activeService = null
+                    }
                 }
             }
         }
     }
 
     Dialog(
-        onDismissRequest = {
-            service.cancel()
-            onDismiss()
-        },
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false)
+        onDismissRequest = ::dismissDialog,
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
     ) {
         Surface(
             modifier = Modifier
@@ -142,7 +230,6 @@ fun SpeedTestDialog(
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -160,19 +247,27 @@ fun SpeedTestDialog(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    AssistChip(
+                        onClick = {},
+                        enabled = false,
+                        label = { Text(targetMode.label) }
+                    )
                     Spacer(modifier = Modifier.weight(1f))
                     if (phase != SpeedTestPhase.TESTING) {
-                        IconButton(onClick = onDismiss) {
+                        IconButton(onClick = ::dismissDialog) {
                             Icon(Icons.Outlined.Close, null)
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 when (phase) {
                     SpeedTestPhase.CONFIG -> {
                         ConfigView(
+                            targetMode = targetMode,
+                            node = node,
                             sizes = sizes,
                             selectedSize = selectedSize,
                             onSizeSelected = { selectedSize = it },
@@ -181,31 +276,31 @@ fun SpeedTestDialog(
                             onStart = { showConfirmDialog = true }
                         )
                     }
+
                     SpeedTestPhase.TESTING -> {
                         TestingView(
+                            targetMode = targetMode,
                             operation = currentOperation,
                             speed = currentSpeed,
                             progress = animatedProgress,
-                            onCancel = {
-                                service.cancel()
-                                onDismiss()
-                            }
+                            onCancel = ::dismissDialog
                         )
                     }
+
                     SpeedTestPhase.RESULT -> {
                         ResultView(
                             downloadResult = downloadResult,
                             uploadResult = uploadResult,
                             error = error,
                             onRetry = { phase = SpeedTestPhase.CONFIG },
-                            onClose = onDismiss
+                            onClose = ::dismissDialog
                         )
                     }
                 }
             }
         }
     }
-    
+
     if (showConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showConfirmDialog = false },
@@ -213,7 +308,8 @@ fun SpeedTestDialog(
             text = {
                 val totalBytes = selectedSize.bytes * (if (selectedDirection == SpeedTestDirection.BOTH) 2 else 1)
                 val totalMb = totalBytes / 1_000_000
-                Text("本次测速预计消耗约 ${totalMb}MB 流量。\n如果您正在使用流量数据，请确剩余流量充足。")
+                val targetLabel = if (targetMode == SpeedTestTargetMode.NODE) "节点带宽" else "直连带宽"
+                Text("本次将测试$targetLabel，预计消耗约 ${totalMb}MB 流量。\n如果您正在使用流量数据，请确认剩余流量充足。")
             },
             confirmButton = {
                 TextButton(
@@ -237,6 +333,8 @@ fun SpeedTestDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConfigView(
+    targetMode: SpeedTestTargetMode,
+    node: Node?,
     sizes: List<SpeedTestSize>,
     selectedSize: SpeedTestSize,
     onSizeSelected: (SpeedTestSize) -> Unit,
@@ -246,12 +344,23 @@ private fun ConfigView(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
+            text = if (targetMode == SpeedTestTargetMode.NODE && node != null) {
+                "当前将通过 ${node.getDisplayName()} 测试节点带宽"
+            } else {
+                "当前将测试本机直连出口带宽（Wi-Fi/流量）"
+            },
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        Text(
             text = "测试大小",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp)
         )
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -264,16 +373,16 @@ private fun ConfigView(
                 )
             }
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Text(
             text = "测试方向",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp)
         )
-        
+
         Column {
             SpeedTestDirection.values().forEach { direction ->
                 Row(
@@ -286,7 +395,7 @@ private fun ConfigView(
                 ) {
                     RadioButton(
                         selected = direction == selectedDirection,
-                        onClick = null // 为空，因为该行可点击
+                        onClick = null
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -297,9 +406,9 @@ private fun ConfigView(
                 }
             }
         }
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         Button(
             onClick = onStart,
             modifier = Modifier.fillMaxWidth(),
@@ -318,6 +427,7 @@ private fun ConfigView(
 
 @Composable
 private fun TestingView(
+    targetMode: SpeedTestTargetMode,
     operation: String,
     speed: Float,
     progress: Float,
@@ -328,14 +438,21 @@ private fun TestingView(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
+            text = if (targetMode == SpeedTestTargetMode.NODE) "正在测试节点带宽" else "正在测试直连带宽",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
             text = operation,
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface
         )
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
-        // Speed Display
+
         Text(
             text = "%.1f".format(speed),
             fontSize = 48.sp,
@@ -347,9 +464,9 @@ private fun TestingView(
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         LinearProgressIndicator(
             progress = progress,
             modifier = Modifier
@@ -359,15 +476,15 @@ private fun TestingView(
             color = Primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         OutlinedButton(
             onClick = onCancel,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("取消测试")
+            Text("取消测速")
         }
     }
 }
@@ -388,7 +505,7 @@ private fun ResultView(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
         }
-        
+
         if (downloadResult != null) {
             ResultCard(
                 title = "下载测试",
@@ -397,7 +514,7 @@ private fun ResultView(
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
-        
+
         if (uploadResult != null) {
             ResultCard(
                 title = "上传测试",
@@ -406,9 +523,9 @@ private fun ResultView(
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -418,9 +535,9 @@ private fun ResultView(
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("重新测试")
+                Text("重新测速")
             }
-            
+
             Button(
                 onClick = onClose,
                 modifier = Modifier.weight(1f),
@@ -436,7 +553,7 @@ private fun ResultView(
 @Composable
 private fun ResultCard(
     title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     result: SpeedTestResult
 ) {
     Surface(
@@ -446,7 +563,12 @@ private fun ResultCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
+                )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = title,
@@ -454,14 +576,14 @@ private fun ResultCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             Row(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("平均速率", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "%.1f Mbps".format(result.avgSpeedMbps),
+                        text = "%.1f Mbps".format(result.avgSpeedMbps),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
                         color = Primary
@@ -470,7 +592,7 @@ private fun ResultCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("峰值速率", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "%.1f Mbps".format(result.peakSpeedMbps),
+                        text = "%.1f Mbps".format(result.peakSpeedMbps),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
@@ -482,7 +604,7 @@ private fun ResultCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("消耗流量", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "%.1f MB".format(result.totalBytes / 1_000_000f),
+                        text = "%.1f MB".format(result.totalBytes / 1_000_000f),
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -490,7 +612,7 @@ private fun ResultCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("耗时", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "%.1f s".format(result.durationMs / 1000f),
+                        text = "%.1f s".format(result.durationMs / 1000f),
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -498,4 +620,8 @@ private fun ResultCard(
             }
         }
     }
+}
+
+private fun pickFreePort(): Int {
+    return ServerSocket(0).use { it.localPort }
 }

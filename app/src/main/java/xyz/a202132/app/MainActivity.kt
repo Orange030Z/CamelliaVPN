@@ -37,6 +37,7 @@ import xyz.a202132.app.ui.components.NodeListScreen
 import xyz.a202132.app.ui.dialogs.NetworkToolboxScreen
 import xyz.a202132.app.ui.navigation.AppRoute
 import xyz.a202132.app.ui.screens.MainScreen
+import xyz.a202132.app.ui.screens.LanProxyScreen
 import xyz.a202132.app.ui.screens.OtherConfigScreen
 import xyz.a202132.app.ui.screens.PerAppProxyScreen
 import xyz.a202132.app.ui.screens.UnlockTestScreen
@@ -129,7 +130,8 @@ class MainActivity : ComponentActivity() {
                                     onOpenNodeList = { navigateTo(AppRoute.NODE_LIST) },
                                     onOpenNetworkToolbox = { navigateTo(AppRoute.NETWORK_TOOLBOX) },
                                     onOpenUnlockTest = { navigateTo(AppRoute.UNLOCK_TEST) },
-                                    onOpenOtherConfig = { navigateTo(AppRoute.OTHER_CONFIG) }
+                                    onOpenOtherConfig = { navigateTo(AppRoute.OTHER_CONFIG) },
+                                    onOpenLanProxy = { navigateTo(AppRoute.LAN_PROXY) }
                                 )
                             }
 
@@ -191,6 +193,13 @@ class MainActivity : ComponentActivity() {
 
                             composable(AppRoute.OTHER_CONFIG) {
                                 OtherConfigScreen(
+                                    viewModel = viewModel,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.LAN_PROXY) {
+                                LanProxyScreen(
                                     viewModel = viewModel,
                                     onBack = { navController.popBackStack() }
                                 )

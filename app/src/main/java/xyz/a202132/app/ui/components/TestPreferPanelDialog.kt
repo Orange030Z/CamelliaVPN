@@ -115,7 +115,7 @@ fun TestPreferPanelDialog(
     onSaveCurrentPreferTestMode: (String) -> Unit,
     onDeleteCurrentPreferTestMode: () -> Unit,
     onHideUnqualifiedAutoTestNodes: () -> Unit,
-    onSelectBestNodeByPriority: (BestNodePriority, Boolean) -> Unit,
+    onSelectBestNodeByPriority: (BestNodePriority, Boolean, TestPreferMode?) -> Unit,
     onUpdateCurrentPreferModePriority: (BestNodePriority) -> Unit,
     onUpdateCurrentPreferModeUnlockPriority: (UnlockPriorityMode, List<String>) -> Unit,
     onStartAutomatedTest: () -> Unit,
@@ -221,7 +221,7 @@ fun TestPreferPanelDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("测试择优面板", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        Text("择优面板", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                         Text(
                             "支持模式保存/删除、按规则测试、自动选择连接最优节点",
                             fontSize = 12.sp,
@@ -334,7 +334,7 @@ fun TestPreferPanelDialog(
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = autoTestLatencyEnabled, onCheckedChange = onSetAutoTestLatencyEnabled)
-                            Text("启用延迟测试（聊天模式默认用）")
+                            Text("启用延迟测试（日常模式默认用）")
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             FilterChip(
@@ -575,7 +575,12 @@ fun TestPreferPanelDialog(
                     onClick = {
                         showPriorityDialog = false
                         onUpdateCurrentPreferModePriority(pendingPriority)
-                        onSelectBestNodeByPriority(pendingPriority, true)
+                        val selectionMode = currentMode?.copy(
+                            defaultPriority = pendingPriority,
+                            unlockPriorityMode = unlockPriorityModeDraft,
+                            unlockPriorityTargetSiteIds = unlockTargetSiteIdsDraft.toList()
+                        )
+                        onSelectBestNodeByPriority(pendingPriority, true, selectionMode)
                     },
                     modifier = Modifier.defaultMinSize(minHeight = 34.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)

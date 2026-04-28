@@ -30,6 +30,7 @@ import xyz.a202132.app.ui.dialogs.AutoTestDetailDialog
 import xyz.a202132.app.ui.dialogs.AutoTestResultDialog
 import xyz.a202132.app.ui.dialogs.SpeedTestDialog
 import xyz.a202132.app.ui.theme.*
+import xyz.a202132.app.viewmodel.AutoTestConfig
 import xyz.a202132.app.viewmodel.AutoTestStage
 import xyz.a202132.app.viewmodel.BestNodePriority
 import xyz.a202132.app.viewmodel.MainViewModel
@@ -46,7 +47,8 @@ fun MainScreen(
     onOpenNodeList: () -> Unit = {},
     onOpenNetworkToolbox: () -> Unit = {},
     onOpenUnlockTest: () -> Unit = {},
-    onOpenOtherConfig: () -> Unit = {}
+    onOpenOtherConfig: () -> Unit = {},
+    onOpenLanProxy: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -165,12 +167,14 @@ fun MainScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                drawerContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                windowInsets = WindowInsets(0, 0, 0, 0)
             ) {
                 DrawerContent(
                     onCheckUpdate = { viewModel.checkUpdate() },
                     onOpenPerAppProxy = onOpenPerAppProxy,
                     onOpenOtherConfig = onOpenOtherConfig,
+                    onOpenLanProxy = onOpenLanProxy,
                     onOpenTestPreferPanel = { showTestPreferPanelPage = true },
                     bypassLan = bypassLan,
                     onToggleBypassLan = { viewModel.setBypassLan(it) },
@@ -464,7 +468,7 @@ fun MainScreen(
             autoConnectLabel = autoConnectLabel,
             onAutoConnectBest = {
                 onStartVpn {
-                    viewModel.selectBestNodeByPriorityFromSnapshot(currentPriority, true)
+                    viewModel.selectBestNodeByPriorityFromSnapshot(currentPriority, true, currentPreferMode)
                 }
             }
         )
@@ -537,18 +541,44 @@ fun MainScreen(
             onSaveCurrentPreferTestMode = { viewModel.saveCurrentPreferTestMode(it) },
             onDeleteCurrentPreferTestMode = { viewModel.deleteCurrentPreferTestMode() },
             onHideUnqualifiedAutoTestNodes = { viewModel.hideUnqualifiedAutoTestNodes() },
-            onSelectBestNodeByPriority = { priority, connect ->
+            onSelectBestNodeByPriority = { priority, connect, modeOverride ->
                 if (connect) {
-                    onStartVpn { viewModel.selectBestNodeByPriorityFromSnapshot(priority, true) }
+                    onStartVpn { viewModel.selectBestNodeByPriorityFromSnapshot(priority, true, modeOverride) }
                 } else {
-                    viewModel.selectBestNodeByPriorityFromSnapshot(priority, false)
+                    viewModel.selectBestNodeByPriorityFromSnapshot(priority, false, modeOverride)
                 }
             },
             onUpdateCurrentPreferModePriority = { viewModel.updateCurrentPreferModePriority(it) },
             onUpdateCurrentPreferModeUnlockPriority = { mode, siteIds ->
                 viewModel.updateCurrentPreferModeUnlockPriority(mode, siteIds)
             },
-            onStartAutomatedTest = { onStartVpn { viewModel.startAutomatedTest() } },
+            onStartAutomatedTest = {
+                val currentMode = preferTestModes.firstOrNull { it.id == preferTestSelectedModeId }
+                val panelConfig = AutoTestConfig(
+                    enabled = autoTestEnabled,
+                    filterUnavailable = autoTestFilterUnavailable,
+                    latencyEnabled = autoTestLatencyEnabled,
+                    latencyMode = autoTestLatencyMode,
+                    latencyThresholdMs = autoTestLatencyThresholdMs,
+                    bandwidthEnabled = autoTestBandwidthEnabled,
+                    bandwidthDownloadEnabled = autoTestBandwidthDownloadEnabled,
+                    bandwidthUploadEnabled = autoTestBandwidthUploadEnabled,
+                    bandwidthDownloadThresholdMbps = autoTestBandwidthDownloadThresholdMbps,
+                    bandwidthUploadThresholdMbps = autoTestBandwidthUploadThresholdMbps,
+                    bandwidthWifiOnly = autoTestBandwidthWifiOnly,
+                    bandwidthDownloadSizeMb = autoTestBandwidthDownloadSizeMb,
+                    bandwidthUploadSizeMb = autoTestBandwidthUploadSizeMb,
+                    unlockEnabled = autoTestUnlockEnabled,
+                    byRegion = autoTestByRegion,
+                    nodeLimit = autoTestNodeLimit
+                )
+                onStartVpn {
+                    viewModel.startAutomatedTest(
+                        configOverride = panelConfig,
+                        modeOverride = currentMode
+                    )
+                }
+            },
             onCancelAutomatedTest = { viewModel.cancelAutomatedTest() },
             onDismiss = { showTestPreferPanelPage = false }
         )
@@ -589,6 +619,8 @@ fun MainScreen(
     // 网速测试弹窗
     if (showSpeedTestDialog) {
         SpeedTestDialog(
+            node = currentNode,
+            useNodeBandwidth = currentNode != null && vpnState == VpnState.CONNECTED,
             downloadTimeoutMs = speedTestDownloadTimeoutMs,
             onDismiss = { showSpeedTestDialog = false }
         )

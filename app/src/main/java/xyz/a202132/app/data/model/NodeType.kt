@@ -30,7 +30,7 @@ enum class NodeType(val protocol: String) {
                 lowerLink.startsWith("naive://") || lowerLink.startsWith("naive+https://") -> NAIVE
                 lowerLink.startsWith("wireguard://") -> WIREGUARD
                 lowerLink.startsWith("ss://") -> SHADOWSOCKS
-                lowerLink.startsWith("socks://") || lowerLink.startsWith("socks5://") || lowerLink.startsWith("socks4://") -> SOCKS
+                lowerLink.startsWith("socks://") || lowerLink.startsWith("socks5://") || lowerLink.startsWith("socks4://") || lowerLink.startsWith("socks4a://") -> SOCKS
                 lowerLink.startsWith("http://") || lowerLink.startsWith("https://") -> HTTP
                 else -> UNKNOWN
             }

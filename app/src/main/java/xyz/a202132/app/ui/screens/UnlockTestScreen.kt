@@ -111,6 +111,9 @@ fun UnlockTestScreen(
         subtitle = "通过临时本地代理逐个测试所选节点",
         onBack = onBack,
         backEnabled = !isRunning,
+        onBackBlocked = {
+            Toast.makeText(context, "请先停止测试再退出", Toast.LENGTH_SHORT).show()
+        },
         actions = {
             IconButton(
                 onClick = {

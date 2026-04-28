@@ -53,7 +53,7 @@ class SubscriptionParser {
             if (!decrypted.startsWith("Error") && !decrypted.contains("://")) {
                 Log.d(tag, "Decrypted content has no '://', trying extra Base64 decode...")
                 try {
-                    val extraDecoded = String(Base64.decode(decrypted.trim(), Base64.DEFAULT), Charsets.UTF_8)
+                    val extraDecoded = decodeBase64Compat(decrypted.trim())
                     if (extraDecoded.contains("://")) {
                         decrypted = extraDecoded
                         Log.d(tag, "✅ Extra Base64 decode successful")
@@ -78,7 +78,7 @@ class SubscriptionParser {
         if (finalContent.isEmpty()) {
             Log.d(tag, "Falling back to Legacy Base64 decoding...")
             finalContent = try {
-                String(Base64.decode(content.trim(), Base64.DEFAULT), Charsets.UTF_8)
+                decodeBase64Compat(content.trim())
             } catch (e: Exception) {
                 // 如果 Base64 也挂了，可能是纯文本
                 Log.w(tag, "Legacy Base64 decode failed, using raw content")
@@ -111,7 +111,7 @@ class SubscriptionParser {
                 lowerLink.startsWith("naive://") || lowerLink.startsWith("naive+https://") -> parseNaiveLink(link)
                 lowerLink.startsWith("wireguard://") -> parseWireGuardLink(link)
                 lowerLink.startsWith("ss://") -> parseShadowsocksLink(link)
-                lowerLink.startsWith("socks://") || lowerLink.startsWith("socks5://") || lowerLink.startsWith("socks4://") -> parseSocksLink(link)
+                lowerLink.startsWith("socks://") || lowerLink.startsWith("socks5://") || lowerLink.startsWith("socks4://") || lowerLink.startsWith("socks4a://") -> parseSocksLink(link)
                 lowerLink.startsWith("http://") || lowerLink.startsWith("https://") -> parseHttpLink(link)
                 else -> null
             }
@@ -148,7 +148,7 @@ class SubscriptionParser {
      */
     private fun parseVmessLink(link: String): Node {
         val base64Content = link.removePrefix("vmess://")
-        val jsonStr = String(Base64.decode(base64Content, Base64.DEFAULT), Charsets.UTF_8)
+        val jsonStr = decodeBase64Compat(base64Content)
         val json = gson.fromJson(jsonStr, JsonObject::class.java)
         
         val name = json.get("ps")?.asString ?: "VMess Node"
@@ -302,7 +302,7 @@ class SubscriptionParser {
         // 如果host为空，说明整个部分都被base64编码了
         if (server == null) {
             val base64Part = link.removePrefix("ss://").substringBefore("#")
-            val decoded = String(Base64.decode(base64Part, Base64.DEFAULT), Charsets.UTF_8)
+            val decoded = decodeBase64Compat(base64Part)
             // 格式: method:password@host:port
             val hostPort = decoded.substringAfter("@")
             server = hostPort.substringBefore(":")
@@ -369,6 +369,15 @@ class SubscriptionParser {
         val md = MessageDigest.getInstance("MD5")
         val digest = md.digest(link.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun decodeBase64Compat(rawValue: String): String {
+        val normalized = rawValue.trim()
+            .replace('-', '+')
+            .replace('_', '/')
+        val padding = (4 - normalized.length % 4) % 4
+        val padded = normalized + "=".repeat(padding)
+        return String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
     }
 
     private fun parseHysteria2Endpoint(link: String): Pair<String?, Int?> {

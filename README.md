@@ -3,8 +3,6 @@
 <p align="center">
   <img src="./images/firefly.jpg" width="100" alt="Logo">
 </p>
-
-
 <p align="center">
   流萤加速器是一款基于 sing-box 核心，支持多种代理协议和智能分流的 Android VPN 客户端。
 </p>
@@ -14,11 +12,12 @@
   <a href="#环境要求">环境要求</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#配置说明">配置说明</a> •
-  <a href="#API 接口（简单部署方式可以参考apis目录里面说明）">API 接口</a> •
+  <a href="#API 接口">API 接口</a> •
   <a href="#自定义">自定义</a> •
   <a href="#构建发布">构建发布</a> •
   <a href="#其他说明">其他说明</a>
 </p>
+
 
 ---
 
@@ -46,6 +45,7 @@
 - 🔧 **协议兼容增强**：自动归一化传输类型（h2→http、xhttp→httpupgrade），完善 ALPN / fingerprint→uTLS / insecure 多别名兼容，支持 Hysteria2 端口跳跃（server_ports）、TUIC id 参数别名
 - 📦 **分应用代理**：精细控制哪些应用走代理或绕过 VPN
 - 🌐 **绕过局域网**：一键开关，局域网流量直连不受影响
+- 🖥️ **局域网代理**：开启 VPN 后提供 HTTP / SOCKS5 局域网代理端口，电脑、平板等同网设备可通过手机当前节点访问网络
 - 🌍 **IPv6 路由**：支持 IPv6 网络访问，可选禁用/启用/优先/仅 IPv6 模式
 - 🔄 **备用节点**：支持配置备用订阅源，主节点不可用时可快速切换
 
@@ -53,8 +53,8 @@
 
 - 🔧 **三点工具菜单**：主界面右上角“三点”菜单提供 TCPing、URL Test、网速测试、流媒体解锁测试、节点IP信息、隐藏超时/不可用节点、网络工具箱等功能
 - 🌐 **URL Test 测试**：通过启动临时无头 sing-box 实例进行 HTTP 握手延迟测试，无需连接 VPN 即可测试所有节点真实连通性
-- 🧠 **测试择优面板（全屏横屏）**：升级版自动化测试入口，支持横屏沉浸式配置、更多参数同屏展示、模式化测试与一键择优
-- 🧩 **测试模式系统**：内置 `聊天模式`（URL Test 延迟优先）与 `下载模式`（下行带宽优先，默认 10MB），支持自定义模式保存/删除
+- 🧠 **择优面板（全屏横屏）**：升级版自动化测试入口，支持横屏沉浸式配置、更多参数同屏展示、模式化测试与一键择优
+- 🧩 **测试模式系统**：内置 `日常模式`（URL Test 延迟优先）与 `下载模式`（下行带宽优先，默认 10MB），支持自定义模式保存/删除
 - 🤖 **自动化测试流程**：支持配置后自动执行“拉节点 → 延迟测试 → 延迟筛选 → 带宽测试 → 带宽筛选 → 解锁测试”，并弹出结果总览与节点详情
 - 🎯 **智能择优规则**：支持延迟优先 / 上行优先 / 下行优先 / 解锁情况优先（解锁数或指定网站多选优先）
 - 🎬 **流媒体解锁测试**：集成 UnlockTests，可逐节点测试国外主流网站解锁情况并展示可滚动结果明细，支持“当前节点”一键勾选与“随机测试节点数”勾选
@@ -72,6 +72,7 @@
 - 🔔 **公告系统**：支持远程推送公告通知
 - ℹ️ **关于页面**：展示应用版本信息、开源协议、GitHub 仓库链接和免责声明
 - ⚙️ **其他配置**：侧边栏可进入“其他配置”页面，自定义 TCPing/URL Test/节点 IP 信息/下载测速超时时间、并发数、VPN MTU 等参数
+- 🔋 **后台稳定性提示**：局域网代理页面支持检测/管理“忽略电池优化”，提升长时间代理稳定性
 - 🚀 **启动画面**：可配置启动倒计时时长（支持跳过），可在 `AppConfig.kt` 中设置 `STARTUP_SPLASH_DURATION_SECONDS`
 - 🎨 **现代 UI**：基于 Jetpack Compose，Material Design 3 风格，页面使用 NavHost + NavController 路由管理
 - 🔧 **开源可定制**：易于修改 API、品牌和配置
@@ -289,10 +290,10 @@ app/src/main/java/xyz/a202132/app/
 │   │   ├── AppScreenScaffold.kt # 通用页面脚手架（统一 TopAppBar + 返回键）
 │   │   ├── ConnectButton.kt     # 连接按钮
 │   │   ├── DrawerContent.kt     # 侧边栏内容
+│   │   ├── TestPreferPanelDialog.kt # 择优面板（全屏横屏）
 │   │   ├── NodeListDialog.kt    # 节点列表页面（文件名沿用旧命名，主入口已改为 NodeListScreen）
 │   │   ├── NodeSelector.kt      # 节点选择器
 │   │   ├── StartupSplashOverlay.kt  # 启动画面覆盖层（可配置倒计时）
-│   │   ├── TestPreferPanelDialog.kt # 测试择优面板（全屏横屏）
 │   │   └── TrafficStatsRow.kt   # 流量统计展示
 │   ├── dialogs/                  # 对话框
 │   │   ├── AboutDialog.kt       # 关于页面弹窗
@@ -307,6 +308,7 @@ app/src/main/java/xyz/a202132/app/
 │   │   └── AppRoute.kt          # 路由常量定义（NavHost 目的地）
 │   ├── screens/                  # 页面（通过 NavHost + NavController 管理）
 │   │   ├── MainScreen.kt        # 主界面
+│   │   ├── LanProxyScreen.kt    # 局域网代理设置页面
 │   │   ├── OtherConfigScreen.kt # 其他配置页面（超时/并发/MTU 等）
 │   │   ├── PerAppProxyScreen.kt # 分应用代理设置界面
 │   │   └── UnlockTestScreen.kt  # 流媒体解锁测试页面
@@ -418,13 +420,13 @@ const val NETWORK_TOOLS_JSON = """
 
 ---
 
-### 测试择优面板（兼容自动化测试） 🚀
+### 择优面板（兼容自动化测试） 🚀
 
-“测试择优面板”是在原自动化测试基础上的增强入口，适合需要频繁调整筛选条件、快速换策略的场景。面板为**全屏横屏沉浸式**，参数更多、视野更大，调起来更顺手 ✨
+“择优面板”是在原自动化测试基础上的增强入口，适合需要频繁调整筛选条件、快速换策略的场景。面板为**全屏横屏沉浸式**，参数更多、视野更大，调起来更顺手 ✨
 
 **核心能力**：
 
-- 🧩 **测试模式**：支持保存/删除当前面板配置，内置 `聊天模式`、`下载模式`
+- 🧩 **测试模式**：支持保存/删除当前面板配置，内置 `日常模式`、`下载模式`
 - 🎛️ **模式化执行**：首页中间按钮可先选模式，再执行测试并自动连接最优节点
 - 🔄 **启动自动执行**：开启后会执行“当前模式”测试（并 Toast 提示当前模式名）
 - 🗑️ **移除未达标**：快速隐藏不可用/超时/筛选失败节点（UI 过滤）
@@ -457,7 +459,7 @@ const val NETWORK_TOOLS_JSON = """
 
 **入口位置**：
 
-- 侧边栏 → `测试择优面板`
+- 侧边栏 → `择优面板`
 - 首页中间按钮（弹模式选择后执行）
 
 ---
@@ -524,6 +526,37 @@ const val NETWORK_TOOLS_JSON = """
 | `169.254.0.0/16` | 链路本地地址 |
 
 **设置位置**：侧边栏 → 绕过局域网（默认开启）
+
+---
+
+### 局域网代理
+
+局域网代理允许同一局域网内的电脑、平板或其他设备连接到手机 APP 的代理端口，通过当前选择的节点访问网络。适合临时让 PC 走手机上的节点代理。
+
+**工作方式**：
+
+- 需先选择节点并开启 VPN，sing-box 服务运行后才会启动局域网代理端口
+- HTTP 代理使用页面显示的 HTTP 端口，SOCKS5 使用下一端口
+- Windows 系统代理 / Edge 推荐使用 HTTP 端口；Firefox 手动代理、curl 或专业代理工具可使用 SOCKS5
+- SOCKS5 测试建议使用 `socks5h://`，让 APP 侧解析域名，例如：
+
+```bash
+curl -I --proxy socks5h://手机局域网IP:SOCKS5端口 https://www.iwara.tv
+```
+
+**端口与认证说明**：
+
+- 支持自动选择一组未占用端口，避免和其他服务冲突
+- 普通 VPN 模式切换或重载不会因为自身旧监听未释放而随意跳端口
+- 认证默认关闭；开启认证后，浏览器不会弹出用户名/密码提示，建议仅在支持预设凭证的工具中使用
+
+**后台稳定性**：
+
+- 页面内提供“忽略电池优化”状态检测与管理入口
+- 长时间给其他设备做代理时，建议允许忽略电池优化
+- 部分定制 ROM 仍可能需要额外开启自启动/后台运行/锁定后台等厂商设置
+
+**设置位置**：侧边栏 → 局域网代理
 
 ---
 
@@ -888,7 +921,7 @@ Release 版本默认移除所有 `android.util.Log` 调用（包括 `Log.d`、`L
 
 ---
 
-## API 接口（简单部署方式可以参考apis目录里面说明）
+## API 接口
 
 ### 1. 节点订阅接口
 
@@ -977,7 +1010,7 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@server:8388#SS节点
 |------|------|------|------|
 | `hasNotice` | Boolean | ✅ | 是否有公告 |
 | `title` | String | ❌ | 公告标题 |
-| `content` | String | ❌ | 公告内容 |
+| `content` | String | ❌ | 公告内容，支持常见 HTML 标签（如 h1-h6、p、b、a、br、img 等），纯文本会自动按换行显示 |
 | `noticeId` | String | ❌ | 公告唯一ID（用于去重） |
 | `showOnce` | Boolean | ❌ | 是否只显示一次（默认 `true`） |
 | `backupNodes` | Object | ❌ | 备用节点配置（可选） |
@@ -1045,112 +1078,6 @@ text = "流萤加速器"; 替换成你的应用名称
 将你的三张图片重命名为上述文件名，替换到 `drawable` 目录即可。
 
 > 💡 推荐使用 **透明背景的 PNG 图片**，尺寸建议 512×512 像素以上以保证清晰度。
-
-#### 恢复经典圆形按钮
-
-如果不想使用自定义图片，可以将 `ConnectButton.kt` 替换为经典的 Material Design 圆形电源按钮：
-
-```kotlin
-package xyz.a202132.app.ui.components
-
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import xyz.a202132.app.data.model.VpnState
-import xyz.a202132.app.ui.theme.*
-
-@Composable
-fun ConnectButton(
-    vpnState: VpnState,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    customLabel: String? = null
-) {
-    val isConnecting = vpnState == VpnState.CONNECTING || vpnState == VpnState.DISCONNECTING
-    val buttonColor by animateColorAsState(
-        targetValue = when (vpnState) {
-            VpnState.CONNECTED -> ConnectedGreen
-            VpnState.CONNECTING, VpnState.DISCONNECTING -> ConnectingYellow
-            VpnState.DISCONNECTED -> Primary
-        },
-        animationSpec = tween(300), label = "buttonColor"
-    )
-    val glowColor by animateColorAsState(
-        targetValue = when (vpnState) {
-            VpnState.CONNECTED -> ConnectedGreenGlow.copy(alpha = 0.3f)
-            VpnState.CONNECTING, VpnState.DISCONNECTING -> ConnectingYellow.copy(alpha = 0.3f)
-            VpnState.DISCONNECTED -> Primary.copy(alpha = 0.2f)
-        },
-        animationSpec = tween(300), label = "glowColor"
-    )
-    val infiniteTransition = rememberInfiniteTransition(label = "loading")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 1.1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ), label = "pulse"
-    )
-    val scale = if (isConnecting) pulseScale else 1f
-
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size((140 * scale).dp)
-                .shadow(20.dp, CircleShape, ambientColor = glowColor, spotColor = glowColor)
-                .background(Brush.radialGradient(listOf(glowColor, Color.Transparent)), CircleShape)
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(CircleShape)
-                    .background(Brush.verticalGradient(listOf(buttonColor, buttonColor.copy(alpha = 0.8f))))
-                    .clickable(enabled = !isConnecting) { onClick() }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = "Connect",
-                    tint = Color.White,
-                    modifier = Modifier.size(56.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = customLabel ?: when (vpnState) {
-                VpnState.CONNECTED -> "已连接"
-                VpnState.CONNECTING -> "连接中..."
-                VpnState.DISCONNECTING -> "断开中..."
-                VpnState.DISCONNECTED -> "点击连接"
-            },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 14.sp, fontWeight = FontWeight.Medium
-        )
-    }
-}
-```
-
-替换后可删除 `drawable` 目录中的 `btn_disconnected.png`、`btn_connecting.png`、`btn_connected.png`。
 
 ---
 
@@ -1350,7 +1277,7 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 
 ---
 
-### 测试择优面板补充
+### 择优面板补充
 
 - 自动化测试结果使用快照（`autoTestResultSnapshot`），避免后续刷新节点导致结果视图被"旧/新数据混合"污染
 - "自动连接最优"按快照和当前优选规则执行（延迟优先/下行优先/解锁优先）
@@ -1372,36 +1299,6 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 - 订阅解析日志已减少敏感信息输出，不再记录完整节点链接原文
 - Native 层密钥与签名目标值已做运行时重组，降低"直接明文检索"命中概率
 - 但这类客户端静态保护仅能提升逆向成本，不能替代真正的密钥托管与服务端校验策略
-
----
-
-
-## 常见问题
-
-### Q: URL Test 全部显示超时
-**A**: 
-
-1. 确认 `network_security_config.xml` 中包含 `<domain includeSubdomains="true">127.0.0.1</domain>` 的明文放行配置
-2. URL Test 需要网络连接，确保 WiFi 或移动数据正常
-3. 检查 Logcat 中 `SingBoxCoreLog` 标签的日志，排查 sing-box 核心错误
-
-### Q: 为什么在“测试择优面板”点击“自动连接最优”后没有立即选中节点？
-**A**:
-这是新的保护逻辑。如果当前模式还没有完成对应类型的测试（例如你选了“下行优先”，但还没跑下行测速），系统会**先保存规则**并提示你执行测试，而不会使用无关结果或默认 URL Test 历史数据去误选节点。
-
-### Q: 流媒体解锁测试使用什么组件？
-**A**:
-使用 [oneclickvirt/UnlockTests](https://github.com/oneclickvirt/UnlockTests) 编译的 Android 二进制，通过本地 SOCKS 代理逐节点测试。
-
-### Q: 如何添加新的代理协议？
-**A**:
-
-1. 在 `NodeType.kt` 添加新枚举值
-2. 在 `SubscriptionParser.kt` 添加解析逻辑
-3. 在 `SingBoxConfigGenerator.kt` 添加 outbound 生成逻辑
-
-### Q: 如何添加新的网络工具？
-**A**: 编辑 `AppConfig.kt` 中的 `NETWORK_TOOLS_JSON`，按格式添加新条目。如需自定义图标，同时修改 `NetworkToolboxDialog.kt` 中的 `getToolIcon()` 函数。
 
 ---
 

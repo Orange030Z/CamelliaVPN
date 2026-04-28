@@ -8,6 +8,7 @@ import okio.BufferedSink
 import xyz.a202132.app.AppConfig
 import android.util.Log
 import java.io.IOException
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "SpeedTestService"
@@ -20,10 +21,17 @@ data class SpeedTestResult(
 )
 
 class SpeedTestService(
-    downloadTimeoutMs: Long = AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS
+    downloadTimeoutMs: Long = AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS,
+    uploadTimeoutMs: Long = AppConfig.AUTO_TEST_BANDWIDTH_UPLOAD_TIMEOUT_MS,
+    proxy: Proxy? = null
 ) {
 
     private val downloadClient = NetworkClient.withUserAgent(OkHttpClient.Builder())
+        .apply {
+            if (proxy != null) {
+                proxy(proxy)
+            }
+        }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
@@ -35,9 +43,19 @@ class SpeedTestService(
         .build()
 
     private val uploadClient = NetworkClient.withUserAgent(OkHttpClient.Builder())
+        .apply {
+            if (proxy != null) {
+                proxy(proxy)
+            }
+        }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .apply {
+            if (uploadTimeoutMs > 0L) {
+                callTimeout(uploadTimeoutMs, TimeUnit.MILLISECONDS)
+            }
+        }
         .build()
 
     @Volatile

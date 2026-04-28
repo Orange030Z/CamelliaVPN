@@ -69,3 +69,8 @@ firefly签名.txt
 # OS-specific
 .DS_Store
 Thumbs.db
+
+# Others
+编译/
+脚本/
+MD文档/

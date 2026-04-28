@@ -1,6 +1,7 @@
 package xyz.a202132.app.ui.components
 
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
@@ -17,13 +18,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.BuildConfig
+import xyz.a202132.app.R
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -40,6 +44,7 @@ fun DrawerContent(
     onCheckUpdate: () -> Unit,
     onOpenPerAppProxy: () -> Unit,
     onOpenOtherConfig: () -> Unit,
+    onOpenLanProxy: () -> Unit,
     onOpenTestPreferPanel: () -> Unit,
     bypassLan: Boolean,
     onToggleBypassLan: (Boolean) -> Unit,
@@ -108,18 +113,18 @@ fun DrawerContent(
         modifier = Modifier
             .fillMaxHeight()
             .width(280.dp)
-            .padding(vertical = 24.dp)
+            .padding(bottom = 24.dp)
     ) {
-        // 标题
-        Text(
-            text = "设置",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+        Image(
+            painter = painterResource(id = R.drawable.drawer_wallpaper),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
         )
         
-        Divider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 8.dp))
+        Divider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(bottom = 8.dp))
         
         Column(
             modifier = Modifier
@@ -128,6 +133,15 @@ fun DrawerContent(
                 .padding(bottom = 8.dp)
         ) {
             // 菜单项
+
+            DrawerMenuItem(
+                icon = Icons.Outlined.SystemUpdate,
+                title = "检查更新",
+                onClick = {
+                    onCheckUpdate()
+                    onClose()
+                }
+            )
 
             // 备用节点 (仅在有效时显示)
             if (isBackupNodeVisible) {
@@ -160,7 +174,19 @@ fun DrawerContent(
                 },
                 onClick = { showIPv6Dialog = true }
             )
-            
+
+            DrawerMenuItem(
+                icon = Icons.Outlined.Settings,
+                title = "择优面板",
+                subtitle = autoTestProgress.message.ifBlank {
+                    if (autoTestProgress.running) "运行中..." else "未运行"
+                },
+                onClick = {
+                    onOpenTestPreferPanel()
+                    onClose()
+                }
+            )
+
             DrawerMenuItem(
                 icon = Icons.Outlined.Apps,
                 title = "分应用代理",
@@ -170,7 +196,7 @@ fun DrawerContent(
                     onClose()
                 }
             )
-            
+
             DrawerMenuToggle(
                 icon = Icons.Outlined.Router,
                 title = "绕过局域网",
@@ -187,13 +213,11 @@ fun DrawerContent(
             )
 
             DrawerMenuItem(
-                icon = Icons.Outlined.Settings,
-                title = "测试择优面板",
-                subtitle = autoTestProgress.message.ifBlank {
-                    if (autoTestProgress.running) "运行中..." else "未运行"
-                },
+                icon = Icons.Outlined.WifiTethering,
+                title = "局域网代理",
+                subtitle = "代理其他设备",
                 onClick = {
-                    onOpenTestPreferPanel()
+                    onOpenLanProxy()
                     onClose()
                 }
             )
@@ -203,15 +227,6 @@ fun DrawerContent(
                 title = "其他配置",
                 onClick = {
                     onOpenOtherConfig()
-                    onClose()
-                }
-            )
-
-            DrawerMenuItem(
-                icon = Icons.Outlined.SystemUpdate,
-                title = "检查更新",
-                onClick = {
-                    onCheckUpdate()
                     onClose()
                 }
             )
@@ -251,7 +266,7 @@ fun DrawerContent(
             
             DrawerMenuItem(
                 icon = Icons.Outlined.Info,
-                title = "关于",
+                title = "关于应用",
                 onClick = { showAboutDialog = true }
             )
             

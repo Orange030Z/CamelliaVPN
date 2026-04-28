@@ -39,6 +39,7 @@ fun AppScreenScaffold(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     backEnabled: Boolean = true,
+    onBackBlocked: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
     content: @Composable () -> Unit
@@ -52,8 +53,12 @@ fun AppScreenScaffold(
         }
     }
 
-    BackHandler(enabled = backEnabled && !isLeaving) {
-        handleBack()
+    BackHandler(enabled = !isLeaving) {
+        if (backEnabled) {
+            handleBack()
+        } else {
+            onBackBlocked?.invoke()
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {

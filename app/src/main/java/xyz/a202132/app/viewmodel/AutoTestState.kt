@@ -85,7 +85,7 @@ const val BUILTIN_PREFER_MODE_DOWNLOAD = "builtin_download"
 fun builtInPreferTestModes(): List<TestPreferMode> = listOf(
     TestPreferMode(
         id = BUILTIN_PREFER_MODE_CHAT,
-        name = "聊天模式",
+        name = "日常模式",
         builtIn = true,
         filterUnavailable = true,
         latencyEnabled = true,

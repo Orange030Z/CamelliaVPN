@@ -62,6 +62,9 @@ object AppConfig {
     
     // VPN
     const val VPN_MTU = 9000
+    const val LAN_PROXY_DEFAULT_PORT = 10809
+    const val LAN_PROXY_MIN_PORT = 1024
+    const val LAN_PROXY_MAX_PORT = 65535
     const val VPN_DNS_PRIMARY = "8.8.8.8"
     const val VPN_DNS_SECONDARY = "8.8.4.4"
     const val VPN_DNS_CHINA = "223.5.5.5" // 国内 DNS（智能分流模式使用）

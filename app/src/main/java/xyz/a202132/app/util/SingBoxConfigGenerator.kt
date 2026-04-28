@@ -3,6 +3,7 @@ package xyz.a202132.app.util
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.data.model.Node
@@ -11,6 +12,15 @@ import xyz.a202132.app.data.model.ProxyMode
 import xyz.a202132.app.data.model.IPv6RoutingMode
 import android.net.Uri
 import android.util.Base64
+
+data class LanProxyConfig(
+    val enabled: Boolean = false,
+    val port: Int = AppConfig.LAN_PROXY_DEFAULT_PORT,
+    val socksPort: Int = AppConfig.LAN_PROXY_DEFAULT_PORT + 1,
+    val authEnabled: Boolean = false,
+    val username: String = "firefly",
+    val password: String = "firefly"
+)
 
 /**
  * sing-box 配置生成器
@@ -32,7 +42,8 @@ class SingBoxConfigGenerator {
         proxyMode: ProxyMode,
         bypassLan: Boolean = true,
         ipv6Mode: IPv6RoutingMode = IPv6RoutingMode.DISABLED,
-        mtu: Int = AppConfig.VPN_MTU
+        mtu: Int = AppConfig.VPN_MTU,
+        lanProxy: LanProxyConfig = LanProxyConfig()
     ): String {
         // 如果没有节点，生成一个空配置防止崩溃
         if (nodes.isEmpty()) {
@@ -51,7 +62,7 @@ class SingBoxConfigGenerator {
                 
             add("log", createLogConfig())
             add("dns", createDnsConfig(proxyMode, nodeDomains, ipv6Mode))
-            add("inbounds", createInbounds(ipv6Mode, mtu))
+            add("inbounds", createInbounds(ipv6Mode, mtu, lanProxy))
             add("outbounds", createOutbounds(nodes, selectedNodeId))
             add("route", createRoute(proxyMode, nodeDomains, nodeIPs, bypassLan))
             add("experimental", createExperimental())
@@ -62,7 +73,7 @@ class SingBoxConfigGenerator {
     private fun generateEmptyConfig(): String {
         val config = JsonObject().apply {
             add("log", createLogConfig())
-            add("inbounds", createInbounds(IPv6RoutingMode.DISABLED, AppConfig.VPN_MTU))
+            add("inbounds", createInbounds(IPv6RoutingMode.DISABLED, AppConfig.VPN_MTU, LanProxyConfig()))
             add("outbounds", JsonArray().apply {
                 add(JsonObject().apply {
                     addProperty("type", "direct")
@@ -282,7 +293,7 @@ class SingBoxConfigGenerator {
         }
     }
     
-    private fun createInbounds(ipv6Mode: IPv6RoutingMode, mtu: Int): JsonArray {
+    private fun createInbounds(ipv6Mode: IPv6RoutingMode, mtu: Int, lanProxy: LanProxyConfig): JsonArray {
         return JsonArray().apply {
             add(JsonObject().apply {
                 addProperty("type", "tun")
@@ -317,6 +328,39 @@ class SingBoxConfigGenerator {
                 addProperty("sniff", true)
                 addProperty("sniff_override_destination", true)
             })
+
+            if (lanProxy.enabled) {
+                add(createLanProxyInbound("http", "lan-http-in", lanProxy.port, lanProxy))
+                add(createLanProxyInbound("socks", "lan-socks-in", lanProxy.socksPort, lanProxy))
+            }
+        }
+    }
+
+    private fun createLanProxyInbound(
+        type: String,
+        tag: String,
+        port: Int,
+        lanProxy: LanProxyConfig
+    ): JsonObject {
+        return JsonObject().apply {
+            addProperty("type", type)
+            addProperty("tag", tag)
+            addProperty("listen", "0.0.0.0")
+            addProperty(
+                "listen_port",
+                port.coerceIn(AppConfig.LAN_PROXY_MIN_PORT, AppConfig.LAN_PROXY_MAX_PORT)
+            )
+            if (type == "http") {
+                addProperty("set_system_proxy", false)
+            }
+            if (lanProxy.authEnabled) {
+                add("users", JsonArray().apply {
+                    add(JsonObject().apply {
+                        addProperty("username", lanProxy.username.ifBlank { "firefly" })
+                        addProperty("password", lanProxy.password.ifBlank { "firefly" })
+                    })
+                })
+            }
         }
     }
 
@@ -410,6 +454,7 @@ class SingBoxConfigGenerator {
             addProperty("server_port", node.port)
             addProperty("uuid", uri.userInfo ?: "")
             addProperty("flow", uri.getQueryParameter("flow") ?: "")
+            queryParamFirst(uri, "packetEncoding", "packet_encoding")?.let { addProperty("packet_encoding", it) }
             
             val security = uri.getQueryParameter("security")
             if (security == "tls" || security == "reality") {
@@ -439,8 +484,8 @@ class SingBoxConfigGenerator {
                 })
             }
             
-            val transport = normalizeTransportType(uri.getQueryParameter("type"))
-            if (transport != "tcp" && transport != "none") {
+            val transport = resolveUriTransportType(uri)
+            if (isSupportedTransport(transport)) {
                 add("transport", createTransport(transport, uri))
             }
         }
@@ -449,7 +494,7 @@ class SingBoxConfigGenerator {
     private fun createVmessOutbound(node: Node): JsonObject {
         val rawLink = node.getRawLinkPlain()
         val base64Content = rawLink.removePrefix("vmess://")
-        val jsonStr = String(Base64.decode(base64Content, Base64.DEFAULT), Charsets.UTF_8)
+        val jsonStr = decodeBase64Compat(base64Content)
         val vmessConfig = gson.fromJson(jsonStr, JsonObject::class.java)
         
         return JsonObject().apply {
@@ -457,14 +502,23 @@ class SingBoxConfigGenerator {
             addProperty("server", vmessConfig.get("add")?.asString ?: node.server)
             addProperty("server_port", vmessConfig.get("port")?.asInt ?: node.port)
             addProperty("uuid", vmessConfig.get("id")?.asString ?: "")
-            addProperty("alter_id", vmessConfig.get("aid")?.asInt ?: 0)
-            addProperty("security", vmessConfig.get("scy")?.asString ?: "auto")
+            addProperty("alter_id", parseJsonInt(vmessConfig.get("aid")) ?: 0)
+            addProperty("security", parseJsonString(vmessConfig.get("scy")) ?: parseJsonString(vmessConfig.get("security")) ?: "auto")
+            parseJsonBoolean(vmessConfig.get("global_padding"))?.let { addProperty("global_padding", it) }
+            parseJsonBoolean(vmessConfig.get("authenticated_length"))?.let { addProperty("authenticated_length", it) }
+            (parseJsonString(vmessConfig.get("packetEncoding")) ?: parseJsonString(vmessConfig.get("packet_encoding")))
+                ?.let { addProperty("packet_encoding", it) }
             
-            val tls = vmessConfig.get("tls")?.asString
+            val tls = parseJsonString(vmessConfig.get("tls"))
             if (tls == "tls") {
                 add("tls", JsonObject().apply {
                     addProperty("enabled", true)
-                    addProperty("server_name", vmessConfig.get("sni")?.asString ?: vmessConfig.get("host")?.asString ?: node.server)
+                    addProperty(
+                        "server_name",
+                        parseJsonString(vmessConfig.get("sni"))
+                            ?: parseJsonStringList(vmessConfig.get("host")).firstOrNull()
+                            ?: node.server
+                    )
                     val alpnValues = parseJsonStringList(vmessConfig.get("alpn"))
                     if (alpnValues.isNotEmpty()) {
                         add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
@@ -489,8 +543,8 @@ class SingBoxConfigGenerator {
                 })
             }
             
-            val network = normalizeTransportType(vmessConfig.get("net")?.asString)
-            if (network != "tcp" && network != "none") {
+            val network = resolveVmessTransportType(vmessConfig)
+            if (isSupportedTransport(network)) {
                 add("transport", createVmessTransport(network, vmessConfig))
             }
         }
@@ -525,8 +579,8 @@ class SingBoxConfigGenerator {
                 addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
             })
             
-            val transport = normalizeTransportType(uri.getQueryParameter("type"))
-            if (transport != "tcp" && transport != "none") {
+            val transport = resolveUriTransportType(uri)
+            if (isSupportedTransport(transport)) {
                 add("transport", createTransport(transport, uri))
             }
         }
@@ -548,10 +602,14 @@ class SingBoxConfigGenerator {
                 addProperty("server_port", serverPorts.firstOrNull()?.toIntOrNull() ?: node.port)
             }
             addProperty("password", uri.userInfo ?: "")
+            queryParamFirst(uri, "hopInterval", "hop_interval")?.let { addProperty("hop_interval", it) }
+            queryParamFirst(uri, "upmbps", "up_mbps", "upMbps")?.toIntOrNull()?.let { addProperty("up_mbps", it) }
+            queryParamFirst(uri, "downmbps", "down_mbps", "downMbps")?.toIntOrNull()?.let { addProperty("down_mbps", it) }
+            queryParamFirst(uri, "network")?.let { addProperty("network", it) }
             
             add("tls", JsonObject().apply {
                 addProperty("enabled", true)
-                addProperty("server_name", uri.getQueryParameter("sni") ?: node.server)
+                addProperty("server_name", queryParamFirst(uri, "sni", "host") ?: node.server)
                 addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
                 if (alpnValues.isNotEmpty()) {
                     add("alpn", JsonArray().apply { alpnValues.forEach { add(it) } })
@@ -565,8 +623,8 @@ class SingBoxConfigGenerator {
                 }
             })
             
-            val obfsType = uri.getQueryParameter("obfs")
-            val obfsPassword = uri.getQueryParameter("obfs-password")
+            val obfsType = queryParamFirst(uri, "obfs")
+            val obfsPassword = queryParamFirst(uri, "obfs-password", "obfs_password", "obfsPassword")
             
             if (!obfsType.isNullOrEmpty()) {
                 add("obfs", JsonObject().apply {
@@ -657,7 +715,7 @@ class SingBoxConfigGenerator {
             uri.getQueryParameter("network")?.let { addProperty("network", it) }
             uri.getQueryParameter("heartbeat")?.let { addProperty("heartbeat", it) }
 
-            if (queryParamEnabled(uri, "zero_rtt_handshake", "0rtt")) {
+            if (queryParamEnabled(uri, "zero_rtt_handshake", "0rtt", "reduce_rtt", "reduce-rtt")) {
                 addProperty("zero_rtt_handshake", true)
             }
             if (queryParamEnabled(uri, "udp_over_stream")) {
@@ -680,6 +738,18 @@ class SingBoxConfigGenerator {
             addProperty("server_port", node.port)
             addProperty("username", username)
             addProperty("password", password)
+            queryParamFirst(uri, "insecure_concurrency", "insecure-concurrency")?.toIntOrNull()?.let {
+                addProperty("insecure_concurrency", it)
+            }
+            queryParamFirst(uri, "quic_congestion_control", "quic-congestion-control", "qcc")?.let {
+                addProperty("quic_congestion_control", it)
+            }
+            if (queryParamEnabled(uri, "quic")) {
+                addProperty("quic", true)
+            }
+            if (queryParamEnabled(uri, "udp_over_tcp", "udp-over-tcp", "uot")) {
+                addProperty("udp_over_tcp", true)
+            }
             add("tls", JsonObject().apply {
                 addProperty("enabled", true)
                 addProperty("server_name", uri.getQueryParameter("sni") ?: uri.getQueryParameter("host") ?: node.server)
@@ -691,13 +761,10 @@ class SingBoxConfigGenerator {
     private fun createWireGuardOutbound(node: Node): JsonObject {
         val rawLink = node.getRawLinkPlain()
         val uri = Uri.parse(rawLink)
-        val privateKey = uri.userInfo ?: uri.getQueryParameter("private_key") ?: ""
-        val peerPublicKey = uri.getQueryParameter("publickey")
-            ?: uri.getQueryParameter("peer_public_key")
-            ?: ""
-        val preSharedKey = uri.getQueryParameter("presharedkey")
-            ?: uri.getQueryParameter("pre_shared_key")
-        val localAddresses = (uri.getQueryParameter("address") ?: uri.getQueryParameter("local_address") ?: "")
+        val privateKey = uri.userInfo ?: queryParamFirst(uri, "private_key", "privateKey") ?: ""
+        val peerPublicKey = queryParamFirst(uri, "publickey", "peer_public_key", "peerPublicKey") ?: ""
+        val preSharedKey = queryParamFirst(uri, "presharedkey", "pre_shared_key", "preSharedKey")
+        val localAddresses = (queryParamFirst(uri, "address", "local_address", "localAddress") ?: "")
             .split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -716,6 +783,8 @@ class SingBoxConfigGenerator {
             }
 
             uri.getQueryParameter("mtu")?.toIntOrNull()?.let { addProperty("mtu", it) }
+            queryParamFirst(uri, "workers")?.toIntOrNull()?.let { addProperty("workers", it) }
+            queryParamFirst(uri, "network")?.let { addProperty("network", it) }
 
             parseWireGuardReserved(uri.getQueryParameter("reserved"))?.let { reserved ->
                 add("reserved", JsonArray().apply { reserved.forEach { add(it) } })
@@ -727,16 +796,7 @@ class SingBoxConfigGenerator {
         val rawLink = node.getRawLinkPlain()
         val uri = Uri.parse(rawLink)
         val linkContent = rawLink.removePrefix("ss://").substringBefore("#")
-        val methodPassword = try {
-            if (linkContent.contains("@")) {
-                val base64Part = linkContent.substringBefore("@")
-                String(Base64.decode(base64Part, Base64.DEFAULT), Charsets.UTF_8)
-            } else {
-                String(Base64.decode(linkContent, Base64.DEFAULT), Charsets.UTF_8).substringBefore("@")
-            }
-        } catch (e: Exception) {
-            "aes-256-gcm:password"
-        }
+        val methodPassword = parseShadowsocksMethodPassword(linkContent)
         
         val parts = methodPassword.split(":", limit = 2)
         val method = parts.getOrNull(0) ?: "aes-256-gcm"
@@ -749,6 +809,10 @@ class SingBoxConfigGenerator {
             addProperty("server_port", node.port)
             addProperty("method", method)
             addProperty("password", password)
+            queryParamFirst(uri, "network")?.let { addProperty("network", it) }
+            if (queryParamEnabled(uri, "udp_over_tcp", "udp-over-tcp", "uot")) {
+                addProperty("udp_over_tcp", true)
+            }
             if (pluginSpec.isNotEmpty()) {
                 val pluginName = pluginSpec.substringBefore(";").trim()
                 val pluginOptions = pluginSpec.substringAfter(";", "").replace("\\=", "=").trim()
@@ -772,6 +836,7 @@ class SingBoxConfigGenerator {
         
         // 检测 SOCKS 版本 (socks4:// -> 4, socks5:// 或 socks:// -> 5)
         val version = when {
+            rawLink.startsWith("socks4a://") -> "4a"
             rawLink.startsWith("socks4://") -> "4"
             else -> "5"
         }
@@ -784,6 +849,9 @@ class SingBoxConfigGenerator {
             if (username.isNotEmpty()) {
                 addProperty("username", username)
                 addProperty("password", password)
+            }
+            if (queryParamEnabled(uri, "udp_over_tcp", "udp-over-tcp", "uot")) {
+                addProperty("udp_over_tcp", true)
             }
         }
     }
@@ -805,10 +873,15 @@ class SingBoxConfigGenerator {
                 addProperty("username", username)
                 addProperty("password", password)
             }
+            queryParamFirst(uri, "path")?.let { addProperty("path", it) }
+            queryParamFirst(uri, "host")?.let { host ->
+                add("headers", JsonObject().apply { addProperty("Host", host) })
+            }
             if (useTls) {
                 add("tls", JsonObject().apply {
                     addProperty("enabled", true)
-                    addProperty("server_name", node.server)
+                    addProperty("server_name", queryParamFirst(uri, "sni", "host") ?: node.server)
+                    addProperty("insecure", queryParamEnabled(uri, "allowInsecure", "allow_insecure", "insecure", "skip-cert-verify"))
                 })
             }
         }
@@ -864,6 +937,32 @@ class SingBoxConfigGenerator {
         }.getOrDefault(emptyList())
     }
 
+    private fun parseJsonBoolean(element: JsonElement?): Boolean? {
+        if (element == null || element.isJsonNull) return null
+        return runCatching {
+            when {
+                element.isJsonPrimitive && element.asJsonPrimitive.isBoolean -> element.asBoolean
+                element.isJsonPrimitive -> when (element.asString.trim().lowercase()) {
+                    "1", "true", "yes", "on" -> true
+                    "0", "false", "no", "off" -> false
+                    else -> null
+                }
+                else -> null
+            }
+        }.getOrNull()
+    }
+
+    private fun parseJsonInt(element: JsonElement?): Int? {
+        if (element == null || element.isJsonNull) return null
+        return runCatching {
+            when {
+                element.isJsonPrimitive && element.asJsonPrimitive.isNumber -> element.asInt
+                element.isJsonPrimitive -> element.asString.trim().toIntOrNull()
+                else -> null
+            }
+        }.getOrNull()
+    }
+
     private fun parseWireGuardReserved(rawValue: String?): List<Int>? {
         if (rawValue.isNullOrBlank()) {
             return null
@@ -897,62 +996,147 @@ class SingBoxConfigGenerator {
             }
     }
 
+    private fun decodeBase64Compat(rawValue: String): String {
+        val normalized = rawValue.trim()
+            .replace('-', '+')
+            .replace('_', '/')
+        val padding = (4 - normalized.length % 4) % 4
+        val padded = normalized + "=".repeat(padding)
+        return String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
+    }
+
+    private fun parseShadowsocksMethodPassword(linkContent: String): String {
+        val credentials = linkContent.substringBefore("@")
+        return when {
+            credentials.contains(":") -> credentials
+            credentials.isNotBlank() -> runCatching { decodeBase64Compat(credentials) }.getOrDefault("aes-256-gcm:password")
+            else -> "aes-256-gcm:password"
+        }
+    }
+
     /**
      * 统一传输层别名，避免将订阅中的新字段原样下发给当前 libbox。
      * 当前内核不识别 xhttp，但二进制中包含 httpupgrade 能力，因此先降级映射。
      */
     private fun normalizeTransportType(type: String?): String {
         return when (type?.trim()?.lowercase()) {
-            null, "", "tcp" -> "tcp"
+            null, "", "tcp", "raw" -> "tcp"
             "h2" -> "http"
-            "xhttp" -> "httpupgrade"
+            "websocket" -> "ws"
+            "gun" -> "grpc"
+            "http-upgrade" -> "httpupgrade"
+            // xhttp/splitHTTP is not equivalent to HTTPUpgrade on sing-box 1.13.
+            "splithttp", "split-http", "xhttp" -> "unsupported"
             else -> type.trim().lowercase()
         }
     }
+
+    private fun resolveUriTransportType(uri: Uri): String {
+        val transport = normalizeTransportType(queryParamFirst(uri, "type", "network"))
+        if (transport == "tcp" || transport == "none") {
+            val headerType = queryParamFirst(uri, "headerType", "header_type")
+            if (headerType.equals("http", ignoreCase = true)) {
+                return "http"
+            }
+        }
+        return transport
+    }
+
+    private fun resolveVmessTransportType(config: JsonObject): String {
+        val network = normalizeTransportType(parseJsonString(config.get("net")) ?: parseJsonString(config.get("network")))
+        if (network == "tcp" || network == "none") {
+            val headerType = parseJsonString(config.get("headerType")) ?: parseJsonString(config.get("type"))
+            if (headerType.equals("http", ignoreCase = true)) {
+                return "http"
+            }
+        }
+        return network
+    }
+
+    private fun isSupportedTransport(type: String): Boolean {
+        return type == "ws" || type == "grpc" || type == "http" || type == "httpupgrade" || type == "quic"
+    }
     
     private fun createTransport(type: String, uri: Uri): JsonObject {
+        val hostValues = parseCsvParams(queryParamFirst(uri, "host"))
         return JsonObject().apply {
             addProperty("type", type)
             when (type) {
                 "ws" -> {
                     addProperty("path", uri.getQueryParameter("path") ?: "/")
-                    uri.getQueryParameter("host")?.let {
+                    hostValues.firstOrNull()?.let {
                         add("headers", JsonObject().apply { addProperty("Host", it) })
                     }
+                    queryParamFirst(uri, "ed", "maxEarlyData", "max_early_data")?.toIntOrNull()?.takeIf { it > 0 }?.let {
+                        addProperty("max_early_data", it)
+                    }
+                    queryParamFirst(uri, "eh", "earlyDataHeaderName", "early_data_header_name")?.let {
+                        addProperty("early_data_header_name", it)
+                    }
                 }
-                "grpc" -> addProperty("service_name", uri.getQueryParameter("serviceName") ?: uri.getQueryParameter("path") ?: "")
+                "grpc" -> {
+                    addProperty("service_name", queryParamFirst(uri, "serviceName", "service_name", "path") ?: "")
+                    queryParamFirst(uri, "idleTimeout", "idle_timeout")?.let { addProperty("idle_timeout", it) }
+                    queryParamFirst(uri, "pingTimeout", "ping_timeout")?.let { addProperty("ping_timeout", it) }
+                    if (queryParamEnabled(uri, "permitWithoutStream", "permit_without_stream")) {
+                        addProperty("permit_without_stream", true)
+                    }
+                }
                 "http" -> {
                     addProperty("path", uri.getQueryParameter("path") ?: "/")
-                    uri.getQueryParameter("host")?.let { add("host", JsonArray().apply { add(it) }) }
+                    if (hostValues.isNotEmpty()) {
+                        add("host", JsonArray().apply { hostValues.forEach { add(it) } })
+                    }
+                    queryParamFirst(uri, "method")?.let { addProperty("method", it) }
+                    queryParamFirst(uri, "idleTimeout", "idle_timeout")?.let { addProperty("idle_timeout", it) }
+                    queryParamFirst(uri, "pingTimeout", "ping_timeout")?.let { addProperty("ping_timeout", it) }
                 }
                 "httpupgrade" -> {
                     addProperty("path", uri.getQueryParameter("path") ?: "/")
-                    uri.getQueryParameter("host")?.let { addProperty("host", it) }
+                    hostValues.firstOrNull()?.let { addProperty("host", it) }
                 }
             }
         }
     }
     
     private fun createVmessTransport(network: String, config: JsonObject): JsonObject {
+        val hostValues = parseJsonStringList(config.get("host"))
         return JsonObject().apply {
             addProperty("type", network)
             when (network) {
                 "ws" -> {
                     addProperty("path", config.get("path")?.asString ?: "/")
-                    config.get("host")?.asString?.let {
+                    hostValues.firstOrNull()?.let {
                         add("headers", JsonObject().apply { addProperty("Host", it) })
                     }
+                    (parseJsonInt(config.get("ed"))
+                        ?: parseJsonInt(config.get("maxEarlyData"))
+                        ?: parseJsonInt(config.get("max_early_data")))
+                        ?.takeIf { it > 0 }
+                        ?.let { addProperty("max_early_data", it) }
+                    (parseJsonString(config.get("eh"))
+                        ?: parseJsonString(config.get("earlyDataHeaderName"))
+                        ?: parseJsonString(config.get("early_data_header_name")))
+                        ?.let { addProperty("early_data_header_name", it) }
                 }
-                "grpc" -> addProperty("service_name", config.get("path")?.asString ?: "")
+                "grpc" -> {
+                    addProperty("service_name", parseJsonString(config.get("serviceName")) ?: config.get("path")?.asString ?: "")
+                    parseJsonString(config.get("idleTimeout"))?.let { addProperty("idle_timeout", it) }
+                    parseJsonString(config.get("pingTimeout"))?.let { addProperty("ping_timeout", it) }
+                    parseJsonBoolean(config.get("permitWithoutStream"))?.let { addProperty("permit_without_stream", it) }
+                }
                 "http" -> {
                     addProperty("path", config.get("path")?.asString ?: "/")
-                    config.get("host")?.asString?.let {
-                        add("host", JsonArray().apply { add(it) })
+                    if (hostValues.isNotEmpty()) {
+                        add("host", JsonArray().apply { hostValues.forEach { add(it) } })
                     }
+                    parseJsonString(config.get("method"))?.let { addProperty("method", it) }
+                    parseJsonString(config.get("idleTimeout"))?.let { addProperty("idle_timeout", it) }
+                    parseJsonString(config.get("pingTimeout"))?.let { addProperty("ping_timeout", it) }
                 }
                 "httpupgrade" -> {
                     addProperty("path", config.get("path")?.asString ?: "/")
-                    config.get("host")?.asString?.let { addProperty("host", it) }
+                    hostValues.firstOrNull()?.let { addProperty("host", it) }
                 }
             }
         }
