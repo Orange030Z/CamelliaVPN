@@ -98,7 +98,7 @@ class SubscriptionParser {
     /**
      * 解析单个节点链接
      */
-    private fun parseNodeLink(link: String): Node? {
+    fun parseNodeLink(link: String): Node? {
         return try {
             val lowerLink = link.lowercase()
             when {

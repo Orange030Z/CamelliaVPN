@@ -40,9 +40,11 @@ import xyz.a202132.app.ui.screens.MainScreen
 import xyz.a202132.app.ui.screens.LanProxyScreen
 import xyz.a202132.app.ui.screens.OtherConfigScreen
 import xyz.a202132.app.ui.screens.PerAppProxyScreen
+import xyz.a202132.app.ui.screens.QrScannerScreen
 import xyz.a202132.app.ui.screens.UnlockTestScreen
 import xyz.a202132.app.ui.theme.FireflyVPNTheme
 import xyz.a202132.app.viewmodel.MainViewModel
+import xyz.a202132.app.viewmodel.NodeImportResult
 
 class MainActivity : ComponentActivity() {
 
@@ -69,15 +71,19 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
 
         setContent {
-            FireflyVPNTheme {
+            val viewModel: MainViewModel = viewModel()
+            val appThemeMode by viewModel.appThemeMode.collectAsState()
+            FireflyVPNTheme(themeMode = appThemeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val viewModel: MainViewModel = viewModel()
                     val navController = rememberNavController()
                     val nodes by viewModel.nodes.collectAsState()
                     val selectedNodeId by viewModel.selectedNodeId.collectAsState()
+                    val nodeListCategory by viewModel.nodeListCategory.collectAsState()
+                    val favoriteSourceNodeIds by viewModel.favoriteSourceNodeIds.collectAsState()
+                    val backupNodeEnabled by viewModel.backupNodeEnabled.collectAsState()
                     val isTesting by viewModel.isTesting.collectAsState()
                     val testingLabel by viewModel.testingLabel.collectAsState()
                     val startupUpdateCheckCompleted by viewModel.startupUpdateCheckCompleted.collectAsState()
@@ -115,6 +121,24 @@ class MainActivity : ComponentActivity() {
                         val navigateTo: (String) -> Unit = { route ->
                             navController.navigate(route) {
                                 launchSingleTop = true
+                            }
+                        }
+                        val importNodesToFavorites: (String, Boolean, ((Boolean) -> Unit)?) -> Unit = { text, returnToNodeList, onComplete ->
+                            viewModel.importNodesToFavoritesFromText(text) { result, importedCount ->
+                                val success = result == NodeImportResult.IMPORTED
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    when (result) {
+                                        NodeImportResult.IMPORTED -> "\u5bfc\u5165${importedCount}\u4e2a\u8282\u70b9\u5230\u6536\u85cf\u8282\u70b9"
+                                        NodeImportResult.DUPLICATE -> "\u8282\u70b9\u5df2\u5b58\u5728\uff0c\u65e0\u9700\u91cd\u590d\u5bfc\u5165"
+                                        NodeImportResult.INVALID -> "\u672a\u627e\u5230\u53ef\u5bfc\u5165\u8282\u70b9"
+                                    },
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                onComplete?.invoke(success)
+                                if (success && returnToNodeList) {
+                                    navController.popBackStack(AppRoute.NODE_LIST, false)
+                                }
                             }
                         }
 
@@ -167,14 +191,30 @@ class MainActivity : ComponentActivity() {
                                 NodeListScreen(
                                     nodes = nodes,
                                     selectedNodeId = selectedNodeId,
+                                    category = nodeListCategory,
+                                    backupNodeEnabled = backupNodeEnabled,
+                                    favoriteSourceNodeIds = favoriteSourceNodeIds,
                                     isTesting = isTesting,
                                     testingLabel = testingLabel,
                                     onNodeSelected = { node ->
                                         viewModel.selectNode(node)
                                         navController.popBackStack(AppRoute.MAIN, false)
                                     },
+                                    onCategoryChange = { viewModel.setNodeListCategory(it) },
+                                    onToggleFavorite = { viewModel.toggleFavoriteNode(it) },
+                                    onImportFromText = { importNodesToFavorites(it, false, null) },
+                                    onScanQrCode = { navigateTo(AppRoute.QR_SCANNER) },
                                     onRefresh = { viewModel.refreshNodesWithDefaultTest() },
                                     onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.QR_SCANNER) {
+                                QrScannerScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onQrCodeScanned = { text, onComplete ->
+                                        importNodesToFavorites(text, true, onComplete)
+                                    }
                                 )
                             }
 

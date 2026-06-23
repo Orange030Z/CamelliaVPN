@@ -11,12 +11,24 @@ interface NodeDao {
     
     @Query("SELECT * FROM nodes ORDER BY sortOrder ASC, latency ASC")
     fun getAllNodes(): Flow<List<Node>>
+
+    @Query("SELECT * FROM nodes WHERE source = 'SUBSCRIPTION' ORDER BY sortOrder ASC, latency ASC")
+    fun getSubscriptionNodes(): Flow<List<Node>>
+
+    @Query("SELECT * FROM nodes WHERE source = 'FAVORITE' ORDER BY favoriteCreatedAt ASC, sortOrder ASC, latency ASC")
+    fun getFavoriteNodes(): Flow<List<Node>>
+
+    @Query("SELECT favoriteSourceNodeId FROM nodes WHERE source = 'FAVORITE' AND favoriteSourceNodeId IS NOT NULL")
+    fun getFavoriteSourceNodeIds(): Flow<List<String?>>
     
     @Query("SELECT * FROM nodes WHERE isAvailable = 1 ORDER BY CASE WHEN latency < 0 THEN 1 ELSE 0 END, latency ASC LIMIT 1")
     suspend fun getBestNode(): Node?
     
     @Query("SELECT * FROM nodes WHERE id = :id")
     suspend fun getNodeById(id: String): Node?
+
+    @Query("SELECT * FROM nodes WHERE source = 'FAVORITE' AND favoriteSourceNodeId = :sourceNodeId LIMIT 1")
+    suspend fun getFavoriteBySourceNodeId(sourceNodeId: String): Node?
     
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNode(node: Node)
@@ -33,9 +45,21 @@ interface NodeDao {
     @Query("DELETE FROM nodes")
     suspend fun deleteAllNodes()
 
+    @Query("DELETE FROM nodes WHERE source = 'SUBSCRIPTION'")
+    suspend fun deleteSubscriptionNodes()
+
+    @Query("DELETE FROM nodes WHERE id = :nodeId")
+    suspend fun deleteNodeById(nodeId: String)
+
     @Transaction
     suspend fun replaceAllNodes(nodes: List<Node>) {
         deleteAllNodes()
+        insertNodes(nodes)
+    }
+
+    @Transaction
+    suspend fun replaceSubscriptionNodes(nodes: List<Node>) {
+        deleteSubscriptionNodes()
         insertNodes(nodes)
     }
     

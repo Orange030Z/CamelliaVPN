@@ -1,7 +1,9 @@
 package xyz.a202132.app.ui.components
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -18,13 +20,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -43,12 +47,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.a202132.app.data.model.LatencyLevel
 import xyz.a202132.app.data.model.Node
+import xyz.a202132.app.data.model.NodeListCategory
+import xyz.a202132.app.data.model.NodeSource
 import xyz.a202132.app.ui.theme.LatencyBad
 import xyz.a202132.app.ui.theme.LatencyGood
 import xyz.a202132.app.ui.theme.LatencyMedium
@@ -58,12 +65,20 @@ import xyz.a202132.app.ui.theme.Primary
 fun NodeListScreen(
     nodes: List<Node>,
     selectedNodeId: String?,
+    category: NodeListCategory,
+    backupNodeEnabled: Boolean,
+    favoriteSourceNodeIds: Set<String>,
     isTesting: Boolean,
     testingLabel: String? = null,
     onNodeSelected: (Node) -> Unit,
+    onCategoryChange: (NodeListCategory) -> Unit,
+    onToggleFavorite: (Node) -> Unit,
+    onImportFromText: (String) -> Unit,
+    onScanQrCode: () -> Unit,
     onRefresh: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     var showSearch by remember { mutableStateOf(false) }
     var keyword by remember { mutableStateOf("") }
     var isClosing by remember { mutableStateOf(false) }
@@ -91,6 +106,25 @@ fun NodeListScreen(
             NodeListTopActions(
                 showSearch = showSearch,
                 enabled = !isClosing,
+                onImportFromClipboard = {
+                    if (isClosing) return@NodeListTopActions
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clipText = clipboard.primaryClip
+                        ?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)
+                        ?.coerceToText(context)
+                        ?.toString()
+                        ?.trim()
+                    if (clipText.isNullOrBlank()) {
+                        Toast.makeText(context, "\u526a\u5207\u677f\u4e3a\u7a7a", Toast.LENGTH_SHORT).show()
+                    } else {
+                        onImportFromText(clipText)
+                    }
+                },
+                onScanQrCode = {
+                    if (isClosing) return@NodeListTopActions
+                    onScanQrCode()
+                },
                 onToggleSearch = {
                     if (isClosing) return@NodeListTopActions
                     showSearch = !showSearch
@@ -105,11 +139,16 @@ fun NodeListScreen(
         NodeListContent(
             nodes = nodes,
             selectedNodeId = selectedNodeId,
+            category = category,
+            backupNodeEnabled = backupNodeEnabled,
+            favoriteSourceNodeIds = favoriteSourceNodeIds,
             isTesting = isTesting,
             showSearch = showSearch,
             keyword = keyword,
             onKeywordChange = { keyword = it },
             onNodeSelected = handleNodeSelected,
+            onCategoryChange = onCategoryChange,
+            onToggleFavorite = onToggleFavorite,
             interactionEnabled = !isClosing,
         )
     }
@@ -119,9 +158,45 @@ fun NodeListScreen(
 private fun NodeListTopActions(
     showSearch: Boolean,
     enabled: Boolean,
+    onImportFromClipboard: () -> Unit,
+    onScanQrCode: () -> Unit,
     onToggleSearch: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    var showImportMenu by remember { mutableStateOf(false) }
+
+    Box {
+        IconButton(
+            onClick = { showImportMenu = true },
+            enabled = enabled
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "\u5bfc\u5165\u8282\u70b9",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        DropdownMenu(
+            expanded = showImportMenu,
+            onDismissRequest = { showImportMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("\u4ece\u526a\u5207\u677f\u5bfc\u5165") },
+                onClick = {
+                    showImportMenu = false
+                    onImportFromClipboard()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("\u626b\u63cf\u4e8c\u7ef4\u7801") },
+                onClick = {
+                    showImportMenu = false
+                    onScanQrCode()
+                }
+            )
+        }
+    }
+
     IconButton(
         onClick = onToggleSearch,
         enabled = enabled
@@ -152,11 +227,16 @@ private fun NodeListTopActions(
 private fun NodeListContent(
     nodes: List<Node>,
     selectedNodeId: String?,
+    category: NodeListCategory,
+    backupNodeEnabled: Boolean,
+    favoriteSourceNodeIds: Set<String>,
     isTesting: Boolean,
     showSearch: Boolean,
     keyword: String,
     onKeywordChange: (String) -> Unit,
     onNodeSelected: (Node) -> Unit,
+    onCategoryChange: (NodeListCategory) -> Unit,
+    onToggleFavorite: (Node) -> Unit,
     interactionEnabled: Boolean,
 ) {
     var frozenNodeOrderIds by remember { mutableStateOf<List<String>?>(null) }
@@ -218,6 +298,14 @@ private fun NodeListContent(
             )
             Spacer(modifier = Modifier.height(10.dp))
         }
+
+        NodeListCategorySwitch(
+            category = category,
+            primaryLabel = if (backupNodeEnabled) "\u5907\u7528\u8282\u70b9" else "\u4e3b\u8282\u70b9",
+            enabled = interactionEnabled && !isTesting,
+            onCategoryChange = onCategoryChange
+        )
+        Spacer(modifier = Modifier.height(12.dp))
 
         if (showSearch) {
             OutlinedTextField(
@@ -285,9 +373,11 @@ private fun NodeListContent(
                         NodeListItem(
                             node = node,
                             isSelected = node.id == selectedNodeId,
+                            isFavorite = node.source == NodeSource.FAVORITE || favoriteSourceNodeIds.contains(node.id),
                             isTesting = isTesting,
                             enabled = interactionEnabled,
-                            onClick = { onNodeSelected(node) }
+                            onClick = { onNodeSelected(node) },
+                            onToggleFavorite = { onToggleFavorite(node) }
                         )
                     }
                 }
@@ -308,12 +398,74 @@ private fun NodeListContent(
 }
 
 @Composable
+private fun NodeListCategorySwitch(
+    category: NodeListCategory,
+    primaryLabel: String,
+    enabled: Boolean,
+    onCategoryChange: (NodeListCategory) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            NodeListCategorySegment(
+                text = primaryLabel,
+                selected = category == NodeListCategory.PRIMARY,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onCategoryChange(NodeListCategory.PRIMARY) }
+            )
+            NodeListCategorySegment(
+                text = "\u6536\u85cf\u8282\u70b9",
+                selected = category == NodeListCategory.FAVORITES,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onCategoryChange(NodeListCategory.FAVORITES) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun NodeListCategorySegment(
+    text: String,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled) { onClick() },
+        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(vertical = 9.dp),
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 14.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+@Composable
 private fun NodeListItem(
     node: Node,
     isSelected: Boolean,
+    isFavorite: Boolean,
     isTesting: Boolean,
     enabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit
 ) {
     val backgroundColor =
         if (isSelected) Primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
@@ -371,23 +523,20 @@ private fun NodeListItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                LatencyBadge(node = node, isTesting = isTesting)
-
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .background(Primary, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "已选择",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = onToggleFavorite,
+                    enabled = enabled,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "\u6536\u85cf\u8282\u70b9",
+                        tint = if (isFavorite) Primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
+
+                LatencyBadge(node = node, isTesting = isTesting)
             }
         }
     }

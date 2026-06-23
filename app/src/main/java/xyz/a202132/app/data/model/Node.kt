@@ -30,7 +30,11 @@ data class Node(
     val unlockSummary: String = "",       // 流媒体解锁摘要
     val unlockPassed: Boolean = false,    // 是否通过解锁阈值
     val autoTestStatus: String = "",      // 自动化测试状态
-    val autoTestedAt: Long = 0            // 自动化测试时间戳
+    val autoTestedAt: Long = 0,           // 自动化测试时间戳
+    // Node source metadata.
+    val source: NodeSource = NodeSource.SUBSCRIPTION,
+    val favoriteSourceNodeId: String? = null,
+    val favoriteCreatedAt: Long = 0L
 ) {
     /**
      * 读取原始链接（自动兼容明文/密文存储）
@@ -137,6 +141,16 @@ enum class LatencyLevel {
     GOOD, MEDIUM, BAD
 }
 
+enum class NodeSource {
+    SUBSCRIPTION,
+    FAVORITE
+}
+
+enum class NodeListCategory {
+    PRIMARY,
+    FAVORITES
+}
+
 /**
  * 节点类型转换器
  */
@@ -147,4 +161,11 @@ class NodeTypeConverter {
     @TypeConverter
     fun toNodeType(protocol: String): NodeType = 
         NodeType.entries.find { it.protocol == protocol } ?: NodeType.UNKNOWN
+
+    @TypeConverter
+    fun fromNodeSource(source: NodeSource): String = source.name
+
+    @TypeConverter
+    fun toNodeSource(source: String): NodeSource =
+        runCatching { NodeSource.valueOf(source) }.getOrDefault(NodeSource.SUBSCRIPTION)
 }

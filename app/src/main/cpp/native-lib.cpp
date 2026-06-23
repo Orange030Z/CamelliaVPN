@@ -233,8 +233,8 @@ static void nativeVerifySignature(JNIEnv* env, jclass /* clazz */, jobject conte
 
 static jstring nativeGetNativeKey(JNIEnv* env, jobject /* this */) {
     // AES密钥示例: "MySecretKey12345" (16 bytes)
-    // 密钥在运行时由两个非文本片段重新构建
-    static const uint8_t partA[16] = {
+// 以下填写通过对AES密钥执行Python示例脚本生成的混淆双数组
+static const uint8_t partA[16] = {
         0x7E, 0x7D, 0x20, 0x5E, 0x5A, 0x60, 0x5A, 0x40,
         0x2A, 0x38, 0x0E, 0x45, 0x00, 0x08, 0x09, 0x03
 };

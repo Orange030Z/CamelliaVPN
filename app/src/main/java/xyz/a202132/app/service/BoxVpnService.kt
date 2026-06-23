@@ -14,6 +14,10 @@ import kotlinx.coroutines.*
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.MainActivity
 import xyz.a202132.app.R
+import xyz.a202132.app.data.local.NodeDao
+import xyz.a202132.app.data.model.Node
+import xyz.a202132.app.data.model.NodeListCategory
+import xyz.a202132.app.data.model.NodeSource
 import xyz.a202132.app.data.model.ProxyMode
 import xyz.a202132.app.data.repository.SettingsRepository
 import xyz.a202132.app.util.LanProxyConfig
@@ -139,14 +143,15 @@ class BoxVpnService : VpnService() {
             try {
                 // 1. 获取所有节点 (用于生成包含所有节点的配置)
                 val nodeDao = xyz.a202132.app.data.local.AppDatabase.getInstance(application).nodeDao()
+                val settingsRepo = SettingsRepository(application)
                 // 使用 Flow 的 first() 获取当前节点列表
-                val allNodes = try {
-                    nodeDao.getAllNodes().first()
+                val rawNodes = try {
+                    loadNodesForVpnStart(nodeDao, settingsRepo, rawLink, nodeName)
                 } catch (e: Exception) {
-                    emptyList<xyz.a202132.app.data.model.Node>()
+                    emptyList<Node>()
                 }
                 
-                if (allNodes.isEmpty()) {
+                if (rawNodes.isEmpty()) {
                     Log.e(TAG, "No nodes available")
                      withContext(Dispatchers.Main) {
                         ServiceManager.notifyError("娌℃湁鍙敤鑺傜偣")
@@ -160,11 +165,27 @@ class BoxVpnService : VpnService() {
                 // 但为了保险，我们尝试匹配 rawLink 对应的节点
                 var selectedNodeId: String? = null
                 if (nodeName != "自动选择") {
-                    selectedNodeId = allNodes.find { it.getRawLinkPlain() == rawLink }?.id
+                    selectedNodeId = rawNodes.find { it.getRawLinkPlain() == rawLink }?.id
+                }
+
+                setupLibboxForConfigCheck()
+                val allNodes = filterCoreCompatibleNodes(rawNodes)
+                if (allNodes.isEmpty()) {
+                    Log.e(TAG, "No core compatible nodes available")
+                    withContext(Dispatchers.Main) {
+                        ServiceManager.notifyError("\u5f53\u524d\u8282\u70b9\u5217\u8868\u6ca1\u6709\u6838\u5fc3\u652f\u6301\u7684\u8282\u70b9")
+                    }
+                    return@launch
+                }
+                if (selectedNodeId != null && allNodes.none { it.id == selectedNodeId }) {
+                    Log.e(TAG, "Selected node is not core compatible: $selectedNodeId")
+                    withContext(Dispatchers.Main) {
+                        ServiceManager.notifyError("\u6240\u9009\u8282\u70b9\u914d\u7f6e\u4e0d\u88ab\u6838\u5fc3\u652f\u6301")
+                    }
+                    return@launch
                 }
 
                 // 读取绕过局域网设置
-                val settingsRepo = SettingsRepository(application)
                 val bypassLan = try {
                     settingsRepo.bypassLan.first()
                 } catch (e: Exception) {
@@ -191,6 +212,7 @@ class BoxVpnService : VpnService() {
 
                 // 4. 生成sing-box配置
                 val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu, lanProxy)
+                Libbox.checkConfig(config)
                 deleteLegacyConfigFile()
                 logConfigForDebug(config)
 
@@ -639,6 +661,71 @@ class BoxVpnService : VpnService() {
         }
     }
 
+    private suspend fun loadNodesForVpnStart(
+        nodeDao: NodeDao,
+        settingsRepo: SettingsRepository,
+        rawLink: String,
+        nodeName: String
+    ): List<Node> {
+        val categoryNodes = loadNodesForCurrentCategory(nodeDao, settingsRepo)
+        if (rawLink.isBlank() || categoryNodes.any { it.getRawLinkPlain() == rawLink }) {
+            return categoryNodes
+        }
+
+        val selectedNode = nodeDao.getAllNodes().first().firstOrNull { it.getRawLinkPlain() == rawLink }
+            ?: return categoryNodes
+        Log.w(TAG, "Selected node $nodeName is outside current category, using source=${selectedNode.source}")
+        return loadNodesForSource(nodeDao, selectedNode.source)
+    }
+
+    private suspend fun loadNodesForCurrentCategory(
+        nodeDao: NodeDao,
+        settingsRepo: SettingsRepository
+    ): List<Node> {
+        return when (settingsRepo.nodeListCategory.first()) {
+            NodeListCategory.PRIMARY -> nodeDao.getSubscriptionNodes().first()
+            NodeListCategory.FAVORITES -> nodeDao.getFavoriteNodes().first()
+        }
+    }
+
+    private suspend fun loadNodesForSource(nodeDao: NodeDao, source: NodeSource): List<Node> {
+        return when (source) {
+            NodeSource.SUBSCRIPTION -> nodeDao.getSubscriptionNodes().first()
+            NodeSource.FAVORITE -> nodeDao.getFavoriteNodes().first()
+        }
+    }
+
+    private fun setupLibboxForConfigCheck() {
+        val workDir = File(filesDir, "sing-box")
+        if (!workDir.exists()) workDir.mkdirs()
+        val options = io.nekohasekai.libbox.SetupOptions().apply {
+            basePath = workDir.absolutePath
+            workingPath = workDir.absolutePath
+            tempPath = cacheDir.absolutePath
+        }
+        Libbox.setup(options)
+    }
+
+    private fun filterCoreCompatibleNodes(nodes: List<Node>): List<Node> {
+        val compatibleNodes = nodes.filter { node ->
+            isNodeCoreConfigCompatible(node)
+        }
+        val skippedCount = nodes.size - compatibleNodes.size
+        if (skippedCount > 0) {
+            Log.w(TAG, "Skipped $skippedCount core-incompatible nodes before VPN start")
+        }
+        return compatibleNodes
+    }
+
+    private fun isNodeCoreConfigCompatible(node: Node): Boolean {
+        return runCatching {
+            val config = configGenerator.generateTestConfig(node)
+            Libbox.checkConfig(config)
+        }.onFailure { error ->
+            Log.w(TAG, "Core-incompatible node skipped: id=${node.id}, type=${node.type}, server=${node.server}, error=${error.message}")
+        }.isSuccess
+    }
+
     private fun stopVpn() {
         val stopStartTime = System.currentTimeMillis()
         Log.d(TAG, "Stopping VPN - start")
@@ -717,15 +804,15 @@ class BoxVpnService : VpnService() {
 
                 // 获取节点信息并重新连接
                 val nodeDao = xyz.a202132.app.data.local.AppDatabase.getInstance(application).nodeDao()
-                val allNodes = try {
-                    nodeDao.getAllNodes().first()
+                val settingsRepo = xyz.a202132.app.data.repository.SettingsRepository(application)
+                val rawNodes = try {
+                    loadNodesForCurrentCategory(nodeDao, settingsRepo)
                 } catch (e: Exception) {
-                    emptyList<xyz.a202132.app.data.model.Node>()
+                    emptyList<Node>()
                 }
                 
-                if (allNodes.isNotEmpty()) {
+                if (rawNodes.isNotEmpty()) {
                     // 读取代理模式
-                    val settingsRepo = xyz.a202132.app.data.repository.SettingsRepository(application)
                     val proxyMode = try {
                         settingsRepo.proxyMode.first()
                     } catch (e: Exception) {
@@ -754,15 +841,35 @@ class BoxVpnService : VpnService() {
 
                     // 获取选中的节点
                     val selectedNodeId = try {
-                        settingsRepo.selectedNodeId.first()
+                        settingsRepo.selectedNodeId.first()?.takeIf { selectedId ->
+                            rawNodes.any { it.id == selectedId }
+                        }
                     } catch (e: Exception) {
                         null
                     }
 
                     // 确保规则集文件存在
+                    setupLibboxForConfigCheck()
+                    val allNodes = filterCoreCompatibleNodes(rawNodes)
+                    if (allNodes.isEmpty()) {
+                        Log.e(TAG, "No core compatible nodes available during restart")
+                        withContext(Dispatchers.Main) {
+                            ServiceManager.notifyError("\u5f53\u524d\u8282\u70b9\u5217\u8868\u6ca1\u6709\u6838\u5fc3\u652f\u6301\u7684\u8282\u70b9")
+                        }
+                        return@launch
+                    }
+                    if (selectedNodeId != null && allNodes.none { it.id == selectedNodeId }) {
+                        Log.e(TAG, "Selected node is not core compatible during restart: $selectedNodeId")
+                        withContext(Dispatchers.Main) {
+                            ServiceManager.notifyError("\u6240\u9009\u8282\u70b9\u914d\u7f6e\u4e0d\u88ab\u6838\u5fc3\u652f\u6301")
+                        }
+                        return@launch
+                    }
+
                     RuleManager.ensureRuleSets(application)
                     
                     val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu, lanProxy)
+                    Libbox.checkConfig(config)
                     deleteLegacyConfigFile()
                     logConfigForDebug(config)
 

@@ -8,4 +8,5 @@ object AppRoute {
     const val UNLOCK_TEST = "unlock_test"
     const val OTHER_CONFIG = "other_config"
     const val LAN_PROXY = "lan_proxy"
+    const val QR_SCANNER = "qr_scanner"
 }

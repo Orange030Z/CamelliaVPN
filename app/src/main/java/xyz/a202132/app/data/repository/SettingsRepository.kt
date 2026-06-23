@@ -8,7 +8,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
+import xyz.a202132.app.data.model.AppThemeMode
 import xyz.a202132.app.data.model.IPv6RoutingMode
+import xyz.a202132.app.data.model.NodeListCategory
 import xyz.a202132.app.data.model.PerAppProxyMode
 import xyz.a202132.app.data.model.ProxyMode
 import xyz.a202132.app.viewmodel.AutoTestLatencyMode
@@ -25,6 +27,7 @@ class SettingsRepository(private val context: Context) {
     
     companion object {
         private val SELECTED_NODE_ID = stringPreferencesKey("selected_node_id")
+        private val APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         private val PROXY_MODE = stringPreferencesKey("proxy_mode")
         private val LAST_NOTICE_ID = stringPreferencesKey("last_notice_id")
         private val AUTO_CONNECT = booleanPreferencesKey("auto_connect")
@@ -69,13 +72,22 @@ class SettingsRepository(private val context: Context) {
         private val PREFER_TEST_SELECTED_MODE_ID = stringPreferencesKey("prefer_test_selected_mode_id")
         private val STARTUP_DEFAULT_TEST_MODE = stringPreferencesKey("startup_default_test_mode")
         private val STARTUP_DEFAULT_TEST_CHOICE_DONE = booleanPreferencesKey("startup_default_test_choice_done")
+        private val REMEMBER_LAST_SELECTED_NODE_ENABLED = booleanPreferencesKey("remember_last_selected_node_enabled")
+        private val LAST_SELECTED_NODE_ID = stringPreferencesKey("last_selected_node_id")
+        private val NODE_LIST_CATEGORY = stringPreferencesKey("node_list_category")
         private val NODE_IP_INFO_TEST_ON_VPN_START = booleanPreferencesKey("node_ip_info_test_on_vpn_start")
+        private val SCHEDULED_NODE_UPDATE_ENABLED = booleanPreferencesKey("scheduled_node_update_enabled")
+        private val SCHEDULED_NODE_UPDATE_HOURS = intPreferencesKey("scheduled_node_update_hours")
+        private val SCHEDULED_NODE_UPDATE_MINUTES = intPreferencesKey("scheduled_node_update_minutes")
+        private val NODE_AUTO_RECONNECT = booleanPreferencesKey("node_auto_reconnect")
+        private val SCHEDULED_NODE_UPDATE_TOAST_ENABLED = booleanPreferencesKey("scheduled_node_update_toast_enabled")
         private val TCPING_TEST_TIMEOUT_MS = longPreferencesKey("tcping_test_timeout_ms")
         private val URL_TEST_TIMEOUT_MS = longPreferencesKey("url_test_timeout_ms")
         private val NODE_IP_INFO_TIMEOUT_MS = longPreferencesKey("node_ip_info_timeout_ms")
         private val SPEED_TEST_DOWNLOAD_TIMEOUT_MS = longPreferencesKey("speed_test_download_timeout_ms")
         private val TCPING_CONCURRENCY = intPreferencesKey("tcping_concurrency")
         private val URL_TEST_CONCURRENCY = intPreferencesKey("url_test_concurrency")
+        private val BANDWIDTH_TEST_CONCURRENCY = intPreferencesKey("bandwidth_test_concurrency")
         private val UNLOCK_TEST_CONCURRENCY = intPreferencesKey("unlock_test_concurrency")
         private val VPN_MTU = intPreferencesKey("vpn_mtu")
 
@@ -89,6 +101,18 @@ class SettingsRepository(private val context: Context) {
     
     val selectedNodeId: Flow<String?> = context.dataStore.data.map { preferences ->
         preferences[SELECTED_NODE_ID]
+    }
+
+    val appThemeMode: Flow<AppThemeMode> = context.dataStore.data.map { preferences ->
+        runCatching {
+            AppThemeMode.valueOf(preferences[APP_THEME_MODE] ?: AppThemeMode.SYSTEM.name)
+        }.getOrDefault(AppThemeMode.SYSTEM)
+    }
+
+    val nodeListCategory: Flow<NodeListCategory> = context.dataStore.data.map { preferences ->
+        runCatching {
+            NodeListCategory.valueOf(preferences[NODE_LIST_CATEGORY] ?: NodeListCategory.PRIMARY.name)
+        }.getOrDefault(NodeListCategory.PRIMARY)
     }
     
     val proxyMode: Flow<ProxyMode> = context.dataStore.data.map { preferences ->
@@ -138,7 +162,22 @@ class SettingsRepository(private val context: Context) {
                 preferences.remove(SELECTED_NODE_ID)
             } else {
                 preferences[SELECTED_NODE_ID] = nodeId
+                if (preferences[REMEMBER_LAST_SELECTED_NODE_ENABLED] ?: true) {
+                    preferences[LAST_SELECTED_NODE_ID] = nodeId
+                }
             }
+        }
+    }
+
+    suspend fun setAppThemeMode(mode: AppThemeMode) {
+        context.dataStore.edit { preferences ->
+            preferences[APP_THEME_MODE] = mode.name
+        }
+    }
+
+    suspend fun setNodeListCategory(category: NodeListCategory) {
+        context.dataStore.edit { preferences ->
+            preferences[NODE_LIST_CATEGORY] = category.name
         }
     }
     
@@ -542,6 +581,35 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    val rememberLastSelectedNodeEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[REMEMBER_LAST_SELECTED_NODE_ENABLED] ?: true
+    }
+
+    suspend fun setRememberLastSelectedNodeEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[REMEMBER_LAST_SELECTED_NODE_ENABLED] = enabled
+            if (!enabled) {
+                preferences.remove(LAST_SELECTED_NODE_ID)
+            } else {
+                preferences[SELECTED_NODE_ID]?.let { preferences[LAST_SELECTED_NODE_ID] = it }
+            }
+        }
+    }
+
+    val lastSelectedNodeId: Flow<String?> = context.dataStore.data.map { preferences ->
+        preferences[LAST_SELECTED_NODE_ID]
+    }
+
+    suspend fun setLastSelectedNodeId(nodeId: String?) {
+        context.dataStore.edit { preferences ->
+            if (nodeId == null) {
+                preferences.remove(LAST_SELECTED_NODE_ID)
+            } else {
+                preferences[LAST_SELECTED_NODE_ID] = nodeId
+            }
+        }
+    }
+
     val nodeIpInfoTestOnVpnStart: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[NODE_IP_INFO_TEST_ON_VPN_START] ?: false
     }
@@ -549,6 +617,56 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNodeIpInfoTestOnVpnStart(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[NODE_IP_INFO_TEST_ON_VPN_START] = enabled
+        }
+    }
+
+    val scheduledNodeUpdateEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[SCHEDULED_NODE_UPDATE_ENABLED] ?: false
+    }
+
+    suspend fun setScheduledNodeUpdateEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SCHEDULED_NODE_UPDATE_ENABLED] = enabled
+        }
+    }
+
+    val scheduledNodeUpdateHours: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[SCHEDULED_NODE_UPDATE_HOURS] ?: 0).coerceIn(0, 168)
+    }
+
+    suspend fun setScheduledNodeUpdateHours(hours: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[SCHEDULED_NODE_UPDATE_HOURS] = hours.coerceIn(0, 168)
+        }
+    }
+
+    val scheduledNodeUpdateMinutes: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[SCHEDULED_NODE_UPDATE_MINUTES] ?: 30).coerceIn(0, 59)
+    }
+
+    suspend fun setScheduledNodeUpdateMinutes(minutes: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[SCHEDULED_NODE_UPDATE_MINUTES] = minutes.coerceIn(0, 59)
+        }
+    }
+
+    val nodeAutoReconnect: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[NODE_AUTO_RECONNECT] ?: false
+    }
+
+    suspend fun setNodeAutoReconnect(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[NODE_AUTO_RECONNECT] = enabled
+        }
+    }
+
+    val scheduledNodeUpdateToastEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[SCHEDULED_NODE_UPDATE_TOAST_ENABLED] ?: true
+    }
+
+    suspend fun setScheduledNodeUpdateToastEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[SCHEDULED_NODE_UPDATE_TOAST_ENABLED] = enabled
         }
     }
 
@@ -610,6 +728,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun setUrlTestConcurrency(value: Int) {
         context.dataStore.edit { preferences ->
             preferences[URL_TEST_CONCURRENCY] = value.coerceIn(1, 128)
+        }
+    }
+
+    val bandwidthTestConcurrency: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[BANDWIDTH_TEST_CONCURRENCY] ?: 1).coerceIn(1, 3)
+    }
+
+    suspend fun setBandwidthTestConcurrency(value: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[BANDWIDTH_TEST_CONCURRENCY] = value.coerceIn(1, 3)
         }
     }
 

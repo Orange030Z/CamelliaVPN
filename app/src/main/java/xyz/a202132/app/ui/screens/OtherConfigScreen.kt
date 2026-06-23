@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import xyz.a202132.app.data.model.AppThemeMode
 import xyz.a202132.app.data.model.VpnState
 import xyz.a202132.app.ui.components.AppScreenScaffold
 import xyz.a202132.app.viewmodel.MainViewModel
@@ -43,47 +44,80 @@ fun OtherConfigScreen(
     val context = LocalContext.current
     val startupDefaultTestMode by viewModel.startupDefaultTestMode.collectAsState()
     val nodeIpInfoTestOnVpnStart by viewModel.nodeIpInfoTestOnVpnStart.collectAsState()
+    val scheduledNodeUpdateEnabled by viewModel.scheduledNodeUpdateEnabled.collectAsState()
+    val scheduledNodeUpdateHours by viewModel.scheduledNodeUpdateHours.collectAsState()
+    val scheduledNodeUpdateMinutes by viewModel.scheduledNodeUpdateMinutes.collectAsState()
+    val nodeAutoReconnect by viewModel.nodeAutoReconnect.collectAsState()
+    val scheduledNodeUpdateToastEnabled by viewModel.scheduledNodeUpdateToastEnabled.collectAsState()
+    val effectiveScheduledNodeUpdateSettings by viewModel.effectiveScheduledNodeUpdateSettings.collectAsState()
     val tcpingTestTimeoutMs by viewModel.tcpingTestTimeoutMs.collectAsState()
     val urlTestTimeoutMs by viewModel.urlTestTimeoutMs.collectAsState()
     val nodeIpInfoTimeoutMs by viewModel.nodeIpInfoTimeoutMs.collectAsState()
     val speedTestDownloadTimeoutMs by viewModel.speedTestDownloadTimeoutMs.collectAsState()
     val tcpingConcurrency by viewModel.tcpingConcurrency.collectAsState()
     val urlTestConcurrency by viewModel.urlTestConcurrency.collectAsState()
+    val bandwidthTestConcurrency by viewModel.bandwidthTestConcurrency.collectAsState()
     val unlockTestConcurrency by viewModel.unlockTestConcurrency.collectAsState()
     val vpnMtu by viewModel.vpnMtu.collectAsState()
     val vpnState by viewModel.vpnState.collectAsState()
+    val rememberLastSelectedNodeEnabled by viewModel.rememberLastSelectedNodeEnabled.collectAsState()
+    val appThemeMode by viewModel.appThemeMode.collectAsState()
 
+    var appThemeModeDraft by remember(appThemeMode) { mutableStateOf(appThemeMode) }
     var startupModeDraft by remember(startupDefaultTestMode) { mutableStateOf(startupDefaultTestMode) }
+    var rememberLastSelectedNodeDraft by remember(rememberLastSelectedNodeEnabled) { mutableStateOf(rememberLastSelectedNodeEnabled) }
     var nodeIpInfoAutoRunDraft by remember(nodeIpInfoTestOnVpnStart) { mutableStateOf(nodeIpInfoTestOnVpnStart) }
+    var scheduledNodeUpdateEnabledDraft by remember(scheduledNodeUpdateEnabled) { mutableStateOf(scheduledNodeUpdateEnabled) }
+    var scheduledNodeUpdateHoursInput by remember(scheduledNodeUpdateHours) { mutableStateOf(scheduledNodeUpdateHours.toString()) }
+    var scheduledNodeUpdateMinutesInput by remember(scheduledNodeUpdateMinutes) { mutableStateOf(scheduledNodeUpdateMinutes.toString()) }
+    var nodeAutoReconnectDraft by remember(nodeAutoReconnect) { mutableStateOf(nodeAutoReconnect) }
+    var scheduledNodeUpdateToastDraft by remember(scheduledNodeUpdateToastEnabled) { mutableStateOf(scheduledNodeUpdateToastEnabled) }
     var tcpingTimeoutInput by remember(tcpingTestTimeoutMs) { mutableStateOf(tcpingTestTimeoutMs.toString()) }
     var urlTestTimeoutInput by remember(urlTestTimeoutMs) { mutableStateOf(urlTestTimeoutMs.toString()) }
     var nodeIpInfoTimeoutInput by remember(nodeIpInfoTimeoutMs) { mutableStateOf(nodeIpInfoTimeoutMs.toString()) }
     var speedTestDownloadTimeoutInput by remember(speedTestDownloadTimeoutMs) { mutableStateOf(speedTestDownloadTimeoutMs.toString()) }
     var tcpingConcurrencyInput by remember(tcpingConcurrency) { mutableStateOf(tcpingConcurrency.toString()) }
     var urlTestConcurrencyInput by remember(urlTestConcurrency) { mutableStateOf(urlTestConcurrency.toString()) }
+    var bandwidthTestConcurrencyInput by remember(bandwidthTestConcurrency) { mutableStateOf(bandwidthTestConcurrency.toString()) }
     var unlockTestConcurrencyInput by remember(unlockTestConcurrency) { mutableStateOf(unlockTestConcurrency.toString()) }
     var mtuInput by remember(vpnMtu) { mutableStateOf(vpnMtu.toString()) }
 
     LaunchedEffect(
+        appThemeMode,
         startupDefaultTestMode,
+        rememberLastSelectedNodeEnabled,
         nodeIpInfoTestOnVpnStart,
+        scheduledNodeUpdateEnabled,
+        scheduledNodeUpdateHours,
+        scheduledNodeUpdateMinutes,
+        nodeAutoReconnect,
+        scheduledNodeUpdateToastEnabled,
         tcpingTestTimeoutMs,
         urlTestTimeoutMs,
         nodeIpInfoTimeoutMs,
         speedTestDownloadTimeoutMs,
         tcpingConcurrency,
         urlTestConcurrency,
+        bandwidthTestConcurrency,
         unlockTestConcurrency,
         vpnMtu
     ) {
+        appThemeModeDraft = appThemeMode
         startupModeDraft = startupDefaultTestMode
+        rememberLastSelectedNodeDraft = rememberLastSelectedNodeEnabled
         nodeIpInfoAutoRunDraft = nodeIpInfoTestOnVpnStart
+        scheduledNodeUpdateEnabledDraft = scheduledNodeUpdateEnabled
+        scheduledNodeUpdateHoursInput = scheduledNodeUpdateHours.toString()
+        scheduledNodeUpdateMinutesInput = scheduledNodeUpdateMinutes.toString()
+        nodeAutoReconnectDraft = nodeAutoReconnect
+        scheduledNodeUpdateToastDraft = scheduledNodeUpdateToastEnabled
         tcpingTimeoutInput = tcpingTestTimeoutMs.toString()
         urlTestTimeoutInput = urlTestTimeoutMs.toString()
         nodeIpInfoTimeoutInput = nodeIpInfoTimeoutMs.toString()
         speedTestDownloadTimeoutInput = speedTestDownloadTimeoutMs.toString()
         tcpingConcurrencyInput = tcpingConcurrency.toString()
         urlTestConcurrencyInput = urlTestConcurrency.toString()
+        bandwidthTestConcurrencyInput = bandwidthTestConcurrency.toString()
         unlockTestConcurrencyInput = unlockTestConcurrency.toString()
         mtuInput = vpnMtu.toString()
     }
@@ -95,14 +129,37 @@ fun OtherConfigScreen(
             TextButton(
                 onClick = {
                     val savedMtu = mtuInput.toIntOrNull()?.coerceIn(576, 9000) ?: vpnMtu
+                    val savedScheduledHours = scheduledNodeUpdateHoursInput.toIntOrNull()?.coerceIn(0, 168)
+                        ?: scheduledNodeUpdateHours
+                    val rawScheduledMinutes = scheduledNodeUpdateMinutesInput.toIntOrNull()?.coerceIn(0, 59)
+                        ?: scheduledNodeUpdateMinutes
+                    val savedScheduledMinutes = if (
+                        scheduledNodeUpdateEnabledDraft &&
+                        savedScheduledHours == 0 &&
+                        rawScheduledMinutes == 0
+                    ) {
+                        1
+                    } else {
+                        rawScheduledMinutes
+                    }
+                    viewModel.setAppThemeMode(appThemeModeDraft)
                     viewModel.setStartupDefaultTestMode(startupModeDraft)
+                    viewModel.setRememberLastSelectedNodeEnabled(rememberLastSelectedNodeDraft)
                     viewModel.setNodeIpInfoTestOnVpnStart(nodeIpInfoAutoRunDraft)
+                    viewModel.setScheduledNodeUpdateSettings(
+                        enabled = scheduledNodeUpdateEnabledDraft,
+                        hours = savedScheduledHours,
+                        minutes = savedScheduledMinutes,
+                        nodeAutoReconnect = nodeAutoReconnectDraft,
+                        toastEnabled = scheduledNodeUpdateToastDraft
+                    )
                     viewModel.setTcpingTestTimeoutMs(tcpingTimeoutInput.toLongOrNull()?.coerceAtLeast(500L) ?: tcpingTestTimeoutMs)
                     viewModel.setUrlTestTimeoutMs(urlTestTimeoutInput.toLongOrNull()?.coerceAtLeast(500L) ?: urlTestTimeoutMs)
                     viewModel.setNodeIpInfoTimeoutMs(nodeIpInfoTimeoutInput.toLongOrNull()?.coerceAtLeast(1000L) ?: nodeIpInfoTimeoutMs)
                     viewModel.setSpeedTestDownloadTimeoutMs(speedTestDownloadTimeoutInput.toLongOrNull()?.coerceAtLeast(0L) ?: speedTestDownloadTimeoutMs)
                     viewModel.setTcpingConcurrency(tcpingConcurrencyInput.toIntOrNull()?.coerceIn(1, 128) ?: tcpingConcurrency)
                     viewModel.setUrlTestConcurrency(urlTestConcurrencyInput.toIntOrNull()?.coerceIn(1, 128) ?: urlTestConcurrency)
+                    viewModel.setBandwidthTestConcurrency(bandwidthTestConcurrencyInput.toIntOrNull()?.coerceIn(1, 3) ?: bandwidthTestConcurrency)
                     viewModel.setUnlockTestConcurrency(unlockTestConcurrencyInput.toIntOrNull()?.coerceIn(1, 32) ?: unlockTestConcurrency)
                     viewModel.setVpnMtu(savedMtu)
                     Toast.makeText(
@@ -126,6 +183,32 @@ fun OtherConfigScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            OtherConfigSection(
+                title = "\u591c\u95f4\u6a21\u5f0f",
+                description = ""
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = appThemeModeDraft == AppThemeMode.SYSTEM,
+                        onClick = { appThemeModeDraft = AppThemeMode.SYSTEM },
+                        label = { Text("\u8ddf\u968f\u7cfb\u7edf") }
+                    )
+                    FilterChip(
+                        selected = appThemeModeDraft == AppThemeMode.LIGHT,
+                        onClick = { appThemeModeDraft = AppThemeMode.LIGHT },
+                        label = { Text("\u6d45\u8272") }
+                    )
+                    FilterChip(
+                        selected = appThemeModeDraft == AppThemeMode.DARK,
+                        onClick = { appThemeModeDraft = AppThemeMode.DARK },
+                        label = { Text("\u6df1\u8272") }
+                    )
+                }
+            }
+
             OtherConfigSection(
                 title = "自动执行",
                 description = "修改配置后会立即生效。"
@@ -164,20 +247,181 @@ fun OtherConfigScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "VPN连接后自动获取节点IP信息",
+                            text = "记住上次选择的节点",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "仅影响后续新的连接动作",
+                            text = "APP 启动后自动恢复上次选择的节点；若节点已不存在则不恢复。启用自动择优测试时，自动测试优先。",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
+                        checked = rememberLastSelectedNodeDraft,
+                        onCheckedChange = { rememberLastSelectedNodeDraft = it }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "VPN连接后自动获取节点IP信息",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Switch(
                         checked = nodeIpInfoAutoRunDraft,
                         onCheckedChange = { nodeIpInfoAutoRunDraft = it }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "定时更新节点信息",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "从上次请求节点完成后开始计时，自动请求上次使用的主节点或备用节点",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = if (effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice) {
+                            effectiveScheduledNodeUpdateSettings.enabled
+                        } else {
+                            scheduledNodeUpdateEnabledDraft
+                        },
+                        onCheckedChange = { scheduledNodeUpdateEnabledDraft = it },
+                        enabled = !effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice
+                    )
+                }
+
+                if (effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice) {
+                    Text(
+                        text = "notice 已覆盖定时更新：每隔 ${effectiveScheduledNodeUpdateSettings.intervalLabel}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OtherConfigNumberField(
+                        label = "间隔小时",
+                        value = if (effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice) {
+                            effectiveScheduledNodeUpdateSettings.hours.toString()
+                        } else {
+                            scheduledNodeUpdateHoursInput
+                        },
+                        onValueChange = { scheduledNodeUpdateHoursInput = it.filter(Char::isDigit) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice
+                    )
+                    OtherConfigNumberField(
+                        label = "间隔分钟",
+                        value = if (effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice) {
+                            effectiveScheduledNodeUpdateSettings.minutes.toString()
+                        } else {
+                            scheduledNodeUpdateMinutesInput
+                        },
+                        onValueChange = { scheduledNodeUpdateMinutesInput = it.filter(Char::isDigit) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "节点自动重连",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "节点更新后，如当前连接节点的 server + port 仍存在，则自动重连到新列表中的对应节点；不存在则保持原连接",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = if (effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice) {
+                            effectiveScheduledNodeUpdateSettings.nodeAutoReconnect
+                        } else {
+                            nodeAutoReconnectDraft
+                        },
+                        onCheckedChange = { nodeAutoReconnectDraft = it },
+                        enabled = !effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "节点更新通知",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Switch(
+                        checked = if (effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice) {
+                            effectiveScheduledNodeUpdateSettings.toastEnabled
+                        } else {
+                            scheduledNodeUpdateToastDraft
+                        },
+                        onCheckedChange = { scheduledNodeUpdateToastDraft = it },
+                        enabled = !effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice
+                    )
+                }
+
+                if (effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice) {
+                    Text(
+                        text = "notice 已覆盖节点自动重连：${if (effectiveScheduledNodeUpdateSettings.nodeAutoReconnect) "开启" else "关闭"}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice) {
+                    Text(
+                        text = "notice 已覆盖节点更新通知：${if (effectiveScheduledNodeUpdateSettings.toastEnabled) "开启" else "关闭"}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (
+                    effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice ||
+                    effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice ||
+                    effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice
+                ) {
+                    Text(
+                        text = "当前设置由 notice 接口覆盖，本地保存只在接口字段移除后生效。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -223,6 +467,11 @@ fun OtherConfigScreen(
                     onValueChange = { urlTestConcurrencyInput = it.filter(Char::isDigit) }
                 )
                 OtherConfigNumberField(
+                    label = "带宽测试并发数",
+                    value = bandwidthTestConcurrencyInput,
+                    onValueChange = { bandwidthTestConcurrencyInput = it.filter(Char::isDigit) }
+                )
+                OtherConfigNumberField(
                     label = "流媒体测试并发数",
                     value = unlockTestConcurrencyInput,
                     onValueChange = { unlockTestConcurrencyInput = it.filter(Char::isDigit) }
@@ -260,11 +509,13 @@ private fun OtherConfigSection(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
-        Text(
-            text = description,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (description.isNotBlank()) {
+            Text(
+                text = description,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         content()
     }
 }
@@ -273,13 +524,16 @@ private fun OtherConfigSection(
 private fun OtherConfigNumberField(
     label: String,
     value: String,
-    onValueChange: (String) -> Unit
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    enabled: Boolean = true
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         label = { Text(label) },
+        enabled = enabled,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
     )

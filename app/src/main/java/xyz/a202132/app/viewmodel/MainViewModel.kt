@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.util.Log
 import com.google.gson.Gson
+import io.nekohasekai.libbox.Libbox
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -37,8 +38,10 @@ import xyz.a202132.app.network.UnlockTestManager
 import xyz.a202132.app.service.BoxVpnService
 import xyz.a202132.app.service.ServiceManager
 import xyz.a202132.app.util.NetworkUtils
+import xyz.a202132.app.util.SingBoxConfigGenerator
 import xyz.a202132.app.util.UnlockTestsRunner
 import xyz.a202132.app.util.CryptoUtils
+import java.io.File
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -53,6 +56,32 @@ enum class StartupDefaultTestMode {
     URL_TEST
 }
 
+enum class NodeImportResult {
+    IMPORTED,
+    DUPLICATE,
+    INVALID
+}
+
+data class ScheduledNodeUpdateSettings(
+    val enabled: Boolean = false,
+    val hours: Int = 0,
+    val minutes: Int = 30,
+    val nodeAutoReconnect: Boolean = false,
+    val toastEnabled: Boolean = true,
+    val scheduledOverriddenByNotice: Boolean = false,
+    val reconnectOverriddenByNotice: Boolean = false,
+    val toastOverriddenByNotice: Boolean = false
+) {
+    val intervalMillis: Long
+        get() = ((hours * 60L) + minutes).coerceAtLeast(1L) * 60_000L
+
+    val intervalLabel: String
+        get() = buildList {
+            if (hours > 0) add("${hours}小时")
+            if (minutes > 0) add("${minutes}分钟")
+        }.ifEmpty { listOf("1分钟") }.joinToString("")
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     private val tag = "MainViewModel"
@@ -60,6 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val nodeDao = database.nodeDao()
     private val settingsRepository = SettingsRepository(application)
     private val subscriptionParser = SubscriptionParser()
+    private val configGenerator = SingBoxConfigGenerator()
     private val latencyTester = LatencyTester()
     private val gson = Gson()
 
@@ -75,6 +105,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastCheckUpdateTime = 0L
     // 缓存最新拉取的节点，供launchStartupDefaultTestIfNeeded使用（避免 Room Flow 延迟导致测旧节点）
     private var lastFetchedNodes: List<Node>? = null
+    private val lastNodeFetchFinishedAt = MutableStateFlow(0L)
+    private var lastSuccessfulNodeFetchUsedBackup: Boolean? = null
     
     // UI状态
     private val _isLoading = MutableStateFlow(false)
@@ -123,17 +155,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val autoTestResultSnapshot = _autoTestResultSnapshot.asStateFlow()
     private var autoTestJob: Job? = null
     
-    // Data
-    val nodes = combine(
-        nodeDao.getAllNodes(),
+    val nodeListCategory = settingsRepository.nodeListCategory.stateIn(
+        viewModelScope,
+        SharingStarted.Lazily,
+        NodeListCategory.PRIMARY
+    )
+
+    val favoriteSourceNodeIds = nodeDao.getFavoriteSourceNodeIds()
+        .map { it.filterNotNull().toSet() }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Lazily,
+            emptySet()
+        )
+
+    private val subscriptionNodes = combine(
+        nodeDao.getSubscriptionNodes(),
         _filterUnavailable
     ) { list, filterOut ->
-        val filtered = if (filterOut) list.filterNot { shouldHideByQuickCleanup(it) } else list
-        filtered.sortedWith(
-            compareByDescending<Node> { it.isAvailable }
-                .thenBy { it.sortOrder }
-                .thenBy { if (it.latency >= 0) it.latency else Int.MAX_VALUE }
-        )
+        sortNodesForList(list, filterOut)
+    }
+
+    private val favoriteNodes = combine(
+        nodeDao.getFavoriteNodes(),
+        _filterUnavailable
+    ) { list, filterOut ->
+        sortNodesForList(list, filterOut)
+    }
+
+    // Data
+    val nodes = combine(
+        subscriptionNodes,
+        favoriteNodes,
+        nodeListCategory
+    ) { subscription, favorites, category ->
+        if (category == NodeListCategory.FAVORITES) favorites else subscription
     }.stateIn(
         viewModelScope,
         SharingStarted.Lazily,
@@ -196,16 +252,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val autoTestUnlockEnabled = settingsRepository.autoTestUnlockEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val autoTestByRegion = settingsRepository.autoTestByRegion.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val autoTestNodeLimit = settingsRepository.autoTestNodeLimit.stateIn(viewModelScope, SharingStarted.Lazily, 20)
+    val appThemeMode = settingsRepository.appThemeMode.stateIn(viewModelScope, SharingStarted.Lazily, AppThemeMode.SYSTEM)
     val preferTestModes = settingsRepository.preferTestModes.stateIn(viewModelScope, SharingStarted.Lazily, builtInPreferTestModes())
     val preferTestSelectedModeId = settingsRepository.preferTestSelectedModeId.stateIn(viewModelScope, SharingStarted.Lazily, BUILTIN_PREFER_MODE_CHAT)
     val startupDefaultTestMode = settingsRepository.startupDefaultTestMode.stateIn(viewModelScope, SharingStarted.Lazily, StartupDefaultTestMode.NONE)
+    val rememberLastSelectedNodeEnabled = settingsRepository.rememberLastSelectedNodeEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val nodeIpInfoTestOnVpnStart = settingsRepository.nodeIpInfoTestOnVpnStart.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val scheduledNodeUpdateEnabled = settingsRepository.scheduledNodeUpdateEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val scheduledNodeUpdateHours = settingsRepository.scheduledNodeUpdateHours.stateIn(viewModelScope, SharingStarted.Lazily, 0)
+    val scheduledNodeUpdateMinutes = settingsRepository.scheduledNodeUpdateMinutes.stateIn(viewModelScope, SharingStarted.Lazily, 30)
+    val nodeAutoReconnect = settingsRepository.nodeAutoReconnect.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val scheduledNodeUpdateToastEnabled = settingsRepository.scheduledNodeUpdateToastEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
+    private val localScheduledNodeUpdateSettings = combine(
+        scheduledNodeUpdateEnabled,
+        scheduledNodeUpdateHours,
+        scheduledNodeUpdateMinutes,
+        nodeAutoReconnect,
+        scheduledNodeUpdateToastEnabled
+    ) { enabled, hours, minutes, reconnect, toast ->
+        ScheduledNodeUpdateSettings(
+            enabled = enabled,
+            hours = hours.coerceIn(0, 168),
+            minutes = minutes.coerceIn(0, 59),
+            nodeAutoReconnect = reconnect,
+            toastEnabled = toast
+        )
+    }
+    val effectiveScheduledNodeUpdateSettings = combine(
+        localScheduledNodeUpdateSettings,
+        noticeConfig
+    ) { local, notice ->
+        val remoteSchedule = notice?.scheduledNodeUpdate
+        val enabled = remoteSchedule?.enabled ?: local.enabled
+        val hours = (remoteSchedule?.hours ?: local.hours).coerceIn(0, 168)
+        val minutes = (remoteSchedule?.minutes ?: local.minutes).coerceIn(0, 59)
+        val normalizedMinutes = if (enabled && hours == 0 && minutes == 0) 1 else minutes
+        val remoteReconnect = remoteSchedule?.nodeAutoReconnect ?: notice?.nodeAutoReconnect
+        ScheduledNodeUpdateSettings(
+            enabled = enabled,
+            hours = hours,
+            minutes = normalizedMinutes,
+            nodeAutoReconnect = remoteReconnect ?: local.nodeAutoReconnect,
+            toastEnabled = remoteSchedule?.toastEnabled ?: local.toastEnabled,
+            scheduledOverriddenByNotice = remoteSchedule != null,
+            reconnectOverriddenByNotice = remoteSchedule?.nodeAutoReconnect != null || notice?.nodeAutoReconnect != null,
+            toastOverriddenByNotice = remoteSchedule?.toastEnabled != null
+        )
+    }.stateIn(viewModelScope, SharingStarted.Lazily, ScheduledNodeUpdateSettings())
     val tcpingTestTimeoutMs = settingsRepository.tcpingTestTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.TCPING_TEST_TIMEOUT)
     val urlTestTimeoutMs = settingsRepository.urlTestTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.URL_TEST_TIMEOUT)
     val nodeIpInfoTimeoutMs = settingsRepository.nodeIpInfoTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.NODE_IP_INFO_TIMEOUT_MS)
     val speedTestDownloadTimeoutMs = settingsRepository.speedTestDownloadTimeoutMs.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.AUTO_TEST_BANDWIDTH_DOWNLOAD_TIMEOUT_MS)
     val tcpingConcurrency = settingsRepository.tcpingConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.TCPING_CONCURRENCY)
     val urlTestConcurrency = settingsRepository.urlTestConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.URL_TEST_CONCURRENCY)
+    val bandwidthTestConcurrency = settingsRepository.bandwidthTestConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, 1)
     val unlockTestConcurrency = settingsRepository.unlockTestConcurrency.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.AUTO_TEST_UNLOCK_CONCURRENCY)
     val vpnMtu = settingsRepository.vpnMtu.stateIn(viewModelScope, SharingStarted.Lazily, AppConfig.VPN_MTU)
     val lanProxyEnabled = settingsRepository.lanProxyEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
@@ -262,6 +362,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             fetchingLabel = "请求节点中"
                         )
                         if (!fetchOk) return@collect
+                        restoreRememberedLastSelectedNodeIfNeeded(lastFetchedNodes)
                         val choiceDone = settingsRepository.startupDefaultTestChoiceDone.first()
                         if (!choiceDone) {
                             _showStartupDefaultTestChoiceDialog.value = true
@@ -317,6 +418,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        observeScheduledNodeUpdates()
+    }
+
+    private fun observeScheduledNodeUpdates() {
+        viewModelScope.launch {
+            effectiveScheduledNodeUpdateSettings
+                .collectLatest { settings ->
+                    if (!settings.enabled) return@collectLatest
+
+                    while (true) {
+                        val anchor = lastNodeFetchFinishedAt.value.takeIf { it > 0L }
+                            ?: lastNodeFetchFinishedAt.first { it > 0L }
+                        val delayMs = (anchor + settings.intervalMillis - System.currentTimeMillis())
+                            .coerceAtLeast(0L)
+                        delay(delayMs)
+
+                        val latestSettings = effectiveScheduledNodeUpdateSettings.value
+                        if (!latestSettings.enabled) continue
+
+                        val latestAnchor = lastNodeFetchFinishedAt.value
+                        val remainingMs = latestAnchor + latestSettings.intervalMillis - System.currentTimeMillis()
+                        if (latestAnchor > anchor && remainingMs > 0L) {
+                            continue
+                        }
+
+                        runScheduledNodeUpdate(latestSettings)
+                    }
+                }
+        }
+    }
+
+    private suspend fun runScheduledNodeUpdate(settings: ScheduledNodeUpdateSettings) {
+        val connectedNodeBeforeUpdate = if (vpnState.value == VpnState.CONNECTED) {
+            ServiceManager.currentNode.value ?: currentNode.value
+        } else {
+            null
+        }
+        val fetchOk = fetchNodesInternal(
+            skipBackupMode = lastSuccessfulNodeFetchUsedBackup == false,
+            bypassThrottle = true,
+            runUrlTest = false,
+            fetchingLabel = "定时更新节点中",
+            allowBackupFallback = false,
+            showToast = settings.toastEnabled
+        )
+        if (!fetchOk) {
+            lastNodeFetchFinishedAt.value = System.currentTimeMillis()
+            return
+        }
+
+        val freshNodes = lastFetchedNodes ?: nodes.value
+        if (
+            settings.nodeAutoReconnect &&
+            connectedNodeBeforeUpdate != null &&
+            vpnState.value == VpnState.CONNECTED
+        ) {
+            val matchedNode = freshNodes.firstOrNull { hasSameEndpoint(it, connectedNodeBeforeUpdate) }
+            if (matchedNode != null) {
+                settingsRepository.setSelectedNodeId(matchedNode.id)
+                ServiceManager.startVpn(getApplication(), matchedNode, proxyMode.value)
+                showScheduledNodeUpdateToast(settings, "节点已定时更新并自动重连: ${matchedNode.name}")
+            } else {
+                showScheduledNodeUpdateToast(settings, "节点已定时更新，当前连接节点已不存在，保持原连接")
+            }
+        } else {
+            showScheduledNodeUpdateToast(settings, "节点已定时更新")
+        }
+    }
+
+    private fun showScheduledNodeUpdateToast(settings: ScheduledNodeUpdateSettings, message: String) {
+        if (settings.toastEnabled) {
+            _error.value = message
+        }
+    }
+
+    private fun hasSameEndpoint(first: Node, second: Node): Boolean {
+        return first.server == second.server && first.port == second.port
     }
 
     
@@ -371,14 +550,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runUrlTest: Boolean = true,
         allowWhenTestRunning: Boolean = false,
         allowWhenFetchingInProgress: Boolean = false,
-        fetchingLabel: String = "请求节点中"
+        fetchingLabel: String = "请求节点中",
+        allowBackupFallback: Boolean = true,
+        showToast: Boolean = true
     ): Boolean {
         if (!allowWhenTestRunning && GlobalTestExecution.mutex.isLocked) {
-            _error.value = GlobalTestExecution.busyHint()
+            showNodeFetchToast(showToast, GlobalTestExecution.busyHint())
             return false
         }
         if (!allowWhenFetchingInProgress && GlobalTestExecution.isFetching()) {
-            _error.value = GlobalTestExecution.fetchingHint()
+            showNodeFetchToast(showToast, GlobalTestExecution.fetchingHint())
             return false
         }
 
@@ -386,7 +567,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!bypassThrottle) {
             val now = System.currentTimeMillis()
             if (now - lastFetchNodesTime < THROTTLE_INTERVAL) {
-                _error.value = "操作过于频繁，请稍后再试"
+                showNodeFetchToast(showToast, "操作过于频繁，请稍后再试")
                 return false
             }
             lastFetchNodesTime = now
@@ -395,10 +576,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         GlobalTestExecution.beginFetching(fetchingLabel)
         _isLoading.value = true
         _filterUnavailable.value = false // 刷新时重置过滤
+        val shouldUpdateFetchAnchor = true
         try {
             // 1. 检查网络状态
             if (!NetworkUtils.isNetworkAvailable(getApplication())) {
-                _error.value = "当前无网络连接，无法获取节点"
+                showNodeFetchToast(showToast, "当前无网络连接，无法获取节点")
                 return false
             }
 
@@ -414,8 +596,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (notice == null) {
                     // Notice 请求失败 (服务器错误等)，触发回退
                     Log.e(tag, "Failed to fetch notice for backup node")
-                    _error.value = "备用节点当前不可用，已退回默认节点！"
-                    handleBackupFallback()
+                    if (allowBackupFallback) {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已退回默认节点！")
+                        handleBackupFallback()
+                    } else {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已保持原连接")
+                    }
                     return false
                 }
 
@@ -432,8 +618,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // 配置无效 (无 backupNodes / 无 url / url 为空 / url 格式错误)
                     // 触发完整回退
                     Log.w(tag, "Backup node config invalid: backupNodes=$${notice.backupNodes}, url=$backupUrl")
-                    _error.value = "备用节点当前不可用，已退回默认节点！"
-                    handleBackupFallback()
+                    if (allowBackupFallback) {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已退回默认节点！")
+                        handleBackupFallback()
+                    } else {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已保持原连接")
+                    }
                     return false
                 }
             }
@@ -446,7 +636,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (result.isFailure) {
                 Log.w(tag, "First fetch attempt failed, retrying...", result.exceptionOrNull())
-                _error.value = "请求节点失败，已自动重试..."
+                showNodeFetchToast(showToast, "请求节点失败，已自动重试...")
                 result = if (targetUrl != null) {
                     subscriptionParser.fetchAndParse(targetUrl)
                 } else {
@@ -455,19 +645,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (result.isSuccess) {
-                val fetchedNodes = result.getOrThrow()
+                val fetchedNodes = result.getOrThrow().map {
+                    it.copy(source = NodeSource.SUBSCRIPTION, favoriteSourceNodeId = null, favoriteCreatedAt = 0L)
+                }
                 // 检查由备用节点返回的空列表
                 if (isBackupEnabled && fetchedNodes.isEmpty()) {
                     Log.w(tag, "Backup node returned empty list, treating as failure")
-                    _error.value = "备用节点当前不可用，已退回默认节点！"
-                    handleBackupFallback()
+                    if (allowBackupFallback) {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已退回默认节点！")
+                        handleBackupFallback()
+                    } else {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已保持原连接")
+                    }
                     return false
                 }
 
                 // 保存到数据库
-                nodeDao.replaceAllNodes(fetchedNodes)
+                nodeDao.replaceSubscriptionNodes(fetchedNodes)
                 // 缓存最新节点，供后续自动测试使用（避免 Room Flow 延迟导致测旧节点）
                 lastFetchedNodes = fetchedNodes
+                lastSuccessfulNodeFetchUsedBackup = targetUrl != null
 
                 if (BuildConfig.DEBUG) {
                     viewModelScope.launch(Dispatchers.IO) {
@@ -487,21 +684,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val e = result.exceptionOrNull()
                 Log.e(tag, "Failed to fetch nodes", e)
                 if (isBackupEnabled) {
-                    _error.value = "备用节点当前不可用，已退回默认节点！"
-                    // 执行回退操作 (关闭，清除URL，重试默认)
-                    handleBackupFallback()
+                    if (allowBackupFallback) {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已退回默认节点！")
+                        // 执行回退操作 (关闭，清除URL，重试默认)
+                        handleBackupFallback()
+                    } else {
+                        showNodeFetchToast(showToast, "备用节点当前不可用，已保持原连接")
+                    }
                 } else {
-                    _error.value = "获取节点失败: ${e?.message ?: "未知错误"}"
+                    showNodeFetchToast(showToast, "获取节点失败: ${e?.message ?: "未知错误"}")
                 }
                 return false
             }
         } catch (e: Exception) {
             Log.e(tag, "Error fetching nodes", e)
-            _error.value = "网络错误"
+            showNodeFetchToast(showToast, "网络错误")
             return false
         } finally {
             _isLoading.value = false
             GlobalTestExecution.endFetching()
+            if (shouldUpdateFetchAnchor) {
+                lastNodeFetchFinishedAt.value = System.currentTimeMillis()
+            }
+        }
+    }
+
+    private fun showNodeFetchToast(showToast: Boolean, message: String) {
+        if (showToast) {
+            _error.value = message
         }
     }
     
@@ -628,7 +838,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isTesting.value = true
             _testingLabel.value = "TCPing 测试中..."
             try {
-                val currentNodes = targetNodes ?: nodes.value
+                val currentNodes = targetNodes ?: currentNodeListSnapshot()
                 internalTestNodes(currentNodes) { completed, total ->
                     _testingLabel.value = "TCPing 测试中 ($completed/$total)"
                 }
@@ -678,7 +888,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var startedHeadless = false
             
             try {
-                val currentNodes = targetNodes ?: nodes.value
+                val currentNodes = targetNodes ?: currentNodeListSnapshot()
                 if (currentNodes.isEmpty()) {
                     _error.value = "没有可用节点"
                     return@launch
@@ -833,9 +1043,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setStartupDefaultTestMode(StartupDefaultTestMode.NONE)
     }
 
+    fun setRememberLastSelectedNodeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setRememberLastSelectedNodeEnabled(enabled)
+        }
+    }
+
     fun setNodeIpInfoTestOnVpnStart(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setNodeIpInfoTestOnVpnStart(enabled)
+        }
+    }
+
+    fun setScheduledNodeUpdateSettings(
+        enabled: Boolean,
+        hours: Int,
+        minutes: Int,
+        nodeAutoReconnect: Boolean,
+        toastEnabled: Boolean
+    ) {
+        viewModelScope.launch {
+            val savedHours = hours.coerceIn(0, 168)
+            val savedMinutes = minutes.coerceIn(0, 59)
+            val normalizedMinutes = if (enabled && savedHours == 0 && savedMinutes == 0) {
+                1
+            } else {
+                savedMinutes
+            }
+            settingsRepository.setScheduledNodeUpdateEnabled(enabled)
+            settingsRepository.setScheduledNodeUpdateHours(savedHours)
+            settingsRepository.setScheduledNodeUpdateMinutes(normalizedMinutes)
+            settingsRepository.setNodeAutoReconnect(nodeAutoReconnect)
+            settingsRepository.setScheduledNodeUpdateToastEnabled(toastEnabled)
         }
     }
 
@@ -875,6 +1114,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setBandwidthTestConcurrency(value: Int) {
+        viewModelScope.launch {
+            settingsRepository.setBandwidthTestConcurrency(value)
+        }
+    }
+
     fun setUnlockTestConcurrency(value: Int) {
         viewModelScope.launch {
             settingsRepository.setUnlockTestConcurrency(value)
@@ -911,6 +1156,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun cleanUnavailableNodes() {
         hideUnqualifiedNodesInternal()
+    }
+
+    private fun sortNodesForList(list: List<Node>, filterOut: Boolean): List<Node> {
+        val filtered = if (filterOut) list.filterNot { shouldHideByQuickCleanup(it) } else list
+        return filtered.sortedWith(
+            compareByDescending<Node> { it.isAvailable }
+                .thenBy { it.sortOrder }
+                .thenBy { if (it.latency >= 0) it.latency else Int.MAX_VALUE }
+        )
     }
 
     private fun shouldHideByQuickCleanup(node: Node): Boolean {
@@ -975,12 +1229,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _error.value = "未找到测试模式"
                 return@launch
             }
+            val currentNodeLimit = settingsRepository.autoTestNodeLimit.first()
             applyPreferTestModeInternal(mode)
+            settingsRepository.setAutoTestNodeLimit(currentNodeLimit)
             _isAutoSelecting.value = true
             startAutomatedTest(
                 preferPriority = mode.defaultPriority,
                 connectBestAfterDone = true,
-                configOverride = mode.toAutoTestConfig(autoRunEnabled = autoTestEnabled.value),
+                configOverride = mode.toAutoTestConfig(autoRunEnabled = autoTestEnabled.value)
+                    .copy(nodeLimit = currentNodeLimit),
                 modeOverride = mode
             )
         }
@@ -998,7 +1255,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val dbNodes = nodeDao.getAllNodes().first()
+            val dbNodes = currentNodeListSnapshot()
             val candidates = dbNodes
                 .filter { it.isAvailable }
                 .let { filterPriorityReadyCandidates(it, priority) }
@@ -1131,7 +1388,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun autoSelectBestNode() {
         viewModelScope.launch {
-            val bestNode = nodeDao.getBestNode()
+            val bestNode = currentNodeListSnapshot()
+                .filter { it.isAvailable }
+                .minWithOrNull(compareBy<Node> { if (it.latency >= 0) it.latency else Int.MAX_VALUE })
             if (bestNode != null) {
                 selectNode(bestNode)
             }
@@ -1152,6 +1411,115 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ServiceManager.startVpn(getApplication(), node, proxyMode.value)
             }
         }
+    }
+
+    fun setNodeListCategory(category: NodeListCategory) {
+        viewModelScope.launch {
+            settingsRepository.setNodeListCategory(category)
+        }
+    }
+
+    fun toggleFavoriteNode(node: Node) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (node.source == NodeSource.FAVORITE) {
+                nodeDao.deleteNodeById(node.id)
+                if (settingsRepository.selectedNodeId.first() == node.id) {
+                    settingsRepository.setSelectedNodeId(null)
+                }
+                return@launch
+            }
+
+            val existingFavorite = nodeDao.getFavoriteBySourceNodeId(node.id)
+            if (existingFavorite != null) {
+                nodeDao.deleteNodeById(existingFavorite.id)
+                if (settingsRepository.selectedNodeId.first() == existingFavorite.id) {
+                    settingsRepository.setSelectedNodeId(null)
+                }
+                return@launch
+            }
+
+            val now = System.currentTimeMillis()
+            nodeDao.insertNode(
+                node.copy(
+                    id = "fav_${UUID.randomUUID()}",
+                    source = NodeSource.FAVORITE,
+                    favoriteSourceNodeId = node.id,
+                    favoriteCreatedAt = now
+                )
+            )
+        }
+    }
+
+    fun importNodesToFavoritesFromText(text: String, onResult: (NodeImportResult, Int) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val importResult = withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                val parsedNodes = subscriptionParser.parseSubscription(text)
+                if (parsedNodes.isEmpty()) return@withContext NodeImportResult.INVALID to 0
+
+                setupLibboxForConfigCheck()
+                val coreCompatibleNodes = parsedNodes.filter { node ->
+                    isNodeCoreConfigCompatible(node)
+                }
+                if (coreCompatibleNodes.isEmpty()) return@withContext NodeImportResult.INVALID to 0
+
+                val existingFavoriteRawLinks = nodeDao.getFavoriteNodes().first()
+                    .map { it.getRawLinkPlain() }
+                    .toMutableSet()
+                val uniqueNodes = coreCompatibleNodes.filter { node ->
+                    existingFavoriteRawLinks.add(node.getRawLinkPlain())
+                }
+                if (uniqueNodes.isEmpty()) return@withContext NodeImportResult.DUPLICATE to 0
+
+                val favorites = uniqueNodes.mapIndexed { index, node ->
+                    node.copy(
+                        id = "fav_${UUID.randomUUID()}",
+                        source = NodeSource.FAVORITE,
+                        favoriteSourceNodeId = null,
+                        favoriteCreatedAt = now + index,
+                        latency = -1,
+                        isAvailable = true,
+                        lastTestedAt = 0L,
+                        downloadMbps = 0f,
+                        uploadMbps = 0f,
+                        unlockSummary = "",
+                        unlockPassed = false,
+                        autoTestStatus = "",
+                        autoTestedAt = 0L
+                    )
+                }
+                nodeDao.insertNodes(favorites)
+                NodeImportResult.IMPORTED to favorites.size
+            }
+            val result = importResult.first
+            val importedCount = importResult.second
+
+            if (result == NodeImportResult.IMPORTED) {
+                settingsRepository.setNodeListCategory(NodeListCategory.FAVORITES)
+            }
+            onResult(result, importedCount)
+        }
+    }
+
+    private fun setupLibboxForConfigCheck() {
+        val app = getApplication<Application>()
+        val workDir = File(app.filesDir, "sing-box")
+        if (!workDir.exists()) workDir.mkdirs()
+        val options = io.nekohasekai.libbox.SetupOptions().apply {
+            basePath = workDir.absolutePath
+            workingPath = workDir.absolutePath
+            tempPath = app.cacheDir.absolutePath
+        }
+        Libbox.setup(options)
+    }
+
+    private fun isNodeCoreConfigCompatible(node: Node): Boolean {
+        return runCatching {
+            val config = configGenerator.generateTestConfig(node)
+            Libbox.checkConfig(config)
+        }.onFailure { error ->
+            Log.w(tag, "Skip incompatible imported node: type=${node.type}, server=${node.server}, error=${error.message}")
+        }.isSuccess
     }
     
     /**
@@ -1511,6 +1879,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.setAutoTestNodeLimit(value) }
     }
 
+    fun setAppThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch { settingsRepository.setAppThemeMode(mode) }
+    }
+
     fun applyPreferTestMode(modeId: String) {
         viewModelScope.launch {
             val mode = preferTestModes.value.firstOrNull { it.id == modeId } ?: return@launch
@@ -1676,26 +2048,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (_autoTestProgress.value.running) return
 
-        val config = configOverride ?: AutoTestConfig(
-            enabled = autoTestEnabled.value,
-            filterUnavailable = autoTestFilterUnavailable.value,
-            latencyEnabled = autoTestLatencyEnabled.value,
-            latencyMode = autoTestLatencyMode.value,
-            latencyThresholdMs = autoTestLatencyThresholdMs.value,
-            bandwidthEnabled = autoTestBandwidthEnabled.value,
-            bandwidthDownloadEnabled = autoTestBandwidthDownloadEnabled.value,
-            bandwidthUploadEnabled = autoTestBandwidthUploadEnabled.value,
-            bandwidthDownloadThresholdMbps = autoTestBandwidthDownloadThresholdMbps.value,
-            bandwidthUploadThresholdMbps = autoTestBandwidthUploadThresholdMbps.value,
-            bandwidthWifiOnly = autoTestBandwidthWifiOnly.value,
-            bandwidthDownloadSizeMb = autoTestBandwidthDownloadSizeMb.value,
-            bandwidthUploadSizeMb = autoTestBandwidthUploadSizeMb.value,
-            unlockEnabled = autoTestUnlockEnabled.value,
-            byRegion = autoTestByRegion.value,
-            nodeLimit = autoTestNodeLimit.value
-        )
-
         autoTestJob = viewModelScope.launch {
+            val config = configOverride ?: readAutoTestConfigFromSettings()
             _autoTestResultSnapshot.value = emptyList()
             if (GlobalTestExecution.isFetching()) {
                 _error.value = GlobalTestExecution.fetchingHint()
@@ -1714,12 +2068,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     message = "正在拉取节点..."
                 )
 
-                val fetchOk = fetchNodesInternal(
+                val fetchOk = if (settingsRepository.nodeListCategory.first() == NodeListCategory.PRIMARY) fetchNodesInternal(
                     bypassThrottle = true,
                     runUrlTest = false,
                     allowWhenTestRunning = true,
                     fetchingLabel = "请求节点中"
-                )
+                ) else true
                 if (!fetchOk) {
                     _error.value = "自动化测试失败：请求节点失败"
                     _autoTestProgress.value = AutoTestProgress(
@@ -1732,7 +2086,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // 在获取后始终读取新的数据库快照，以避免陈旧的 Flow 缓存
                 // 导致在长时间运行的自动化测试中按 ID 更新失败。
-                val latestSnapshot = nodeDao.getAllNodes().first()
+                val latestSnapshot = currentNodeListSnapshot()
                 var workingNodes = selectNodesForAutoTest(latestSnapshot, config).map { node ->
                     node.copy(
                         downloadMbps = 0f,
@@ -1837,35 +2191,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (config.bandwidthDownloadEnabled) bandwidthDirectionList.add("下行")
                         if (config.bandwidthUploadEnabled) bandwidthDirectionList.add("上行")
                         val bandwidthDirections = bandwidthDirectionList.joinToString("+")
+                        val bandwidthConcurrency = settingsRepository.bandwidthTestConcurrency.first().coerceIn(1, 3)
+                        val bandwidthConcurrencyLabel = if (bandwidthConcurrency > 1) {
+                            "，并发 $bandwidthConcurrency"
+                        } else {
+                            ""
+                        }
                         _autoTestProgress.value = AutoTestProgress(
                             running = true,
                             stage = AutoTestStage.BANDWIDTH_TEST,
-                            message = "逐节点带宽测试中（$bandwidthDirections）...",
+                            message = "带宽测试中（$bandwidthDirections$bandwidthConcurrencyLabel）...",
                             total = workingNodes.size
                         )
 
-                        val updatedNodes = mutableListOf<Node>()
-                        workingNodes.forEachIndexed { index, node ->
-                            _autoTestProgress.value = AutoTestProgress(
-                                running = true,
-                                stage = AutoTestStage.BANDWIDTH_TEST,
-                                message = "带宽测试($bandwidthDirections): ${node.getDisplayName()} (${index + 1}/${workingNodes.size})",
-                                completed = index + 1,
-                                total = workingNodes.size
-                            )
-                            val downloadMbps = if (config.bandwidthDownloadEnabled) {
-                                testNodeDownloadBandwidthMbps(node, config.bandwidthDownloadSizeMb)
-                            } else 0f
-                            val uploadMbps = if (config.bandwidthUploadEnabled) {
-                                testNodeUploadBandwidthMbps(node, config.bandwidthUploadSizeMb)
-                            } else 0f
-                            val testedAt = System.currentTimeMillis()
-                            nodeDao.updateBandwidth(node.id, downloadMbps, uploadMbps, testedAt)
-                            updatedNodes += node.copy(
-                                downloadMbps = downloadMbps,
-                                uploadMbps = uploadMbps,
-                                autoTestedAt = testedAt
-                            )
+                        val totalBandwidthNodes = workingNodes.size
+                        val completedBandwidthNodes = AtomicInteger(0)
+                        val updatedNodes = coroutineScope {
+                            val semaphore = Semaphore(bandwidthConcurrency)
+                            workingNodes.map { node ->
+                                async(Dispatchers.IO) {
+                                    semaphore.withPermit {
+                                        _autoTestProgress.value = AutoTestProgress(
+                                            running = true,
+                                            stage = AutoTestStage.BANDWIDTH_TEST,
+                                            message = "带宽测试($bandwidthDirections): ${node.getDisplayName()} (${completedBandwidthNodes.get()}/${totalBandwidthNodes}$bandwidthConcurrencyLabel)",
+                                            completed = completedBandwidthNodes.get(),
+                                            total = totalBandwidthNodes
+                                        )
+                                        val downloadMbps = if (config.bandwidthDownloadEnabled) {
+                                            testNodeDownloadBandwidthMbps(node, config.bandwidthDownloadSizeMb)
+                                        } else 0f
+                                        val uploadMbps = if (config.bandwidthUploadEnabled) {
+                                            testNodeUploadBandwidthMbps(node, config.bandwidthUploadSizeMb)
+                                        } else 0f
+                                        val testedAt = System.currentTimeMillis()
+                                        nodeDao.updateBandwidth(node.id, downloadMbps, uploadMbps, testedAt)
+                                        val completed = completedBandwidthNodes.incrementAndGet()
+                                        _autoTestProgress.value = AutoTestProgress(
+                                            running = true,
+                                            stage = AutoTestStage.BANDWIDTH_TEST,
+                                            message = "带宽测试($bandwidthDirections): 已完成 $completed/$totalBandwidthNodes$bandwidthConcurrencyLabel",
+                                            completed = completed,
+                                            total = totalBandwidthNodes
+                                        )
+                                        node.copy(
+                                            downloadMbps = downloadMbps,
+                                            uploadMbps = uploadMbps,
+                                            autoTestedAt = testedAt
+                                        )
+                                    }
+                                }
+                            }.awaitAll()
                         }
                         workingNodes = updatedNodes
 
@@ -2011,6 +2387,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun readAutoTestConfigFromSettings(): AutoTestConfig {
+        return AutoTestConfig(
+            enabled = settingsRepository.autoTestEnabled.first(),
+            filterUnavailable = settingsRepository.autoTestFilterUnavailable.first(),
+            latencyEnabled = settingsRepository.autoTestLatencyEnabled.first(),
+            latencyMode = settingsRepository.autoTestLatencyMode.first(),
+            latencyThresholdMs = settingsRepository.autoTestLatencyThresholdMs.first(),
+            bandwidthEnabled = settingsRepository.autoTestBandwidthEnabled.first(),
+            bandwidthDownloadEnabled = settingsRepository.autoTestBandwidthDownloadEnabled.first(),
+            bandwidthUploadEnabled = settingsRepository.autoTestBandwidthUploadEnabled.first(),
+            bandwidthDownloadThresholdMbps = settingsRepository.autoTestBandwidthDownloadThresholdMbps.first(),
+            bandwidthUploadThresholdMbps = settingsRepository.autoTestBandwidthUploadThresholdMbps.first(),
+            bandwidthWifiOnly = settingsRepository.autoTestBandwidthWifiOnly.first(),
+            bandwidthDownloadSizeMb = settingsRepository.autoTestBandwidthDownloadSizeMb.first(),
+            bandwidthUploadSizeMb = settingsRepository.autoTestBandwidthUploadSizeMb.first(),
+            unlockEnabled = settingsRepository.autoTestUnlockEnabled.first(),
+            byRegion = settingsRepository.autoTestByRegion.first(),
+            nodeLimit = settingsRepository.autoTestNodeLimit.first()
+        )
+    }
+
     fun cancelAutomatedTest() {
         autoTestJob?.cancel()
         autoTestJob = null
@@ -2032,6 +2429,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .groupBy { resolveRegionBucket(it) }
             .values
             .flatMap { regionNodes -> regionNodes.take(limit) }
+    }
+
+    private suspend fun currentNodeListSnapshot(): List<Node> {
+        val category = settingsRepository.nodeListCategory.first()
+        val snapshot = when (category) {
+            NodeListCategory.PRIMARY -> nodeDao.getSubscriptionNodes().first()
+            NodeListCategory.FAVORITES -> nodeDao.getFavoriteNodes().first()
+        }
+        return sortNodesForList(snapshot, _filterUnavailable.value)
     }
 
     private fun resolveRegionBucket(node: Node): String {
@@ -2085,6 +2491,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         waitForCondition(timeoutMs = finishTimeoutMs) { !isTesting.value }
     }
 
+    private suspend fun restoreRememberedLastSelectedNodeIfNeeded(freshNodes: List<Node>? = null) {
+        if (!settingsRepository.rememberLastSelectedNodeEnabled.first()) return
+        val rememberedNodeId = settingsRepository.lastSelectedNodeId.first()?.takeIf { it.isNotBlank() } ?: return
+        val candidateNodes = freshNodes ?: nodeDao.getAllNodes().first()
+        if (candidateNodes.any { it.id == rememberedNodeId } || nodeDao.getNodeById(rememberedNodeId) != null) {
+            settingsRepository.setSelectedNodeId(rememberedNodeId)
+        }
+    }
+
     private fun launchStartupDefaultTestIfNeeded(showHint: Boolean = false) {
         // 取出缓存的最新节点（避免 Room Flow 延迟导致测旧节点）
         val freshNodes = lastFetchedNodes
@@ -2125,7 +2540,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun waitForNodesReadyWithAutoRetry(timeoutMs: Long): Boolean {
         val firstAttempt = runCatching {
-            waitForCondition(timeoutMs = timeoutMs) { !isLoading.value && nodes.value.isNotEmpty() }
+            waitForCondition(timeoutMs = timeoutMs) {
+                !isLoading.value && (nodes.value.isNotEmpty() || nodeListCategory.value == NodeListCategory.FAVORITES)
+            }
         }
         if (firstAttempt.isSuccess) return true
 
@@ -2142,7 +2559,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val secondAttempt = runCatching {
-            waitForCondition(timeoutMs = timeoutMs) { !isLoading.value && nodes.value.isNotEmpty() }
+            waitForCondition(timeoutMs = timeoutMs) {
+                !isLoading.value && (nodes.value.isNotEmpty() || nodeListCategory.value == NodeListCategory.FAVORITES)
+            }
         }
         if (secondAttempt.isSuccess) return true
 
@@ -2172,14 +2591,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (mode == StartupDefaultTestMode.NONE) return
         if (_isTesting.value || _autoTestProgress.value.running) return
+        val freshTargetNodes = if (nodeListCategory.value == NodeListCategory.PRIMARY) freshNodes else null
         when (mode) {
             StartupDefaultTestMode.TCPING -> {
                 if (showHint) _error.value = "已按默认设置执行 TCPing 测试"
-                testAllNodes(freshNodes)
+                testAllNodes(freshTargetNodes)
             }
             StartupDefaultTestMode.URL_TEST -> {
                 if (showHint) _error.value = "已按默认设置执行 URL Test 测试"
-                urlTestAllNodes(freshNodes)
+                urlTestAllNodes(freshTargetNodes)
             }
             StartupDefaultTestMode.NONE -> Unit
         }
@@ -2274,7 +2694,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun testNodeDownloadBandwidthMbps(node: Node, sizeMb: Int): Float = withContext(Dispatchers.IO) {
         val port = pickFreePort()
-        val started = UnlockTestManager.start(getApplication(), node, port)
+        val session = UnlockTestManager.createSession(getApplication(), node, port)
+        val started = session.start()
         if (!started) return@withContext 0f
 
         try {
@@ -2309,13 +2730,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Log.e(tag, "Download bandwidth test failed for ${node.getDisplayName()}: ${e.message}")
             0f
         } finally {
-            UnlockTestManager.stop()
+            session.stop()
         }
     }
 
     private suspend fun testNodeUploadBandwidthMbps(node: Node, sizeMb: Int): Float = withContext(Dispatchers.IO) {
         val port = pickFreePort()
-        val started = UnlockTestManager.start(getApplication(), node, port)
+        val session = UnlockTestManager.createSession(getApplication(), node, port)
+        val started = session.start()
         if (!started) return@withContext 0f
 
         try {
@@ -2364,7 +2786,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Log.e(tag, "Upload bandwidth test failed for ${node.getDisplayName()}: ${e.message}")
             0f
         } finally {
-            UnlockTestManager.stop()
+            session.stop()
         }
     }
 

@@ -17,8 +17,6 @@
   <a href="#构建发布">构建发布</a> •
   <a href="#其他说明">其他说明</a>
 </p>
-
-
 ---
 
 **免责声明：** 本项目为本人开源作品，与米哈游 (HoYoverse) 无关。本项目不盈利、不接受捐赠。所有涉及的游戏角色名称及设计版权归米哈游所有。
@@ -48,6 +46,9 @@
 - 🖥️ **局域网代理**：开启 VPN 后提供 HTTP / SOCKS5 局域网代理端口，电脑、平板等同网设备可通过手机当前节点访问网络
 - 🌍 **IPv6 路由**：支持 IPv6 网络访问，可选禁用/启用/优先/仅 IPv6 模式
 - 🔄 **备用节点**：支持配置备用订阅源，主节点不可用时可快速切换
+- ⭐ **收藏节点**：收藏节点与主/备用订阅节点独立存储，订阅刷新不会覆盖收藏内容
+- ➕ **节点导入**：节点列表支持从剪切板导入和扫码导入，导入结果自动去重并写入收藏节点
+- 🛡️ **核心配置校验**：收藏导入与 VPN 启动前会使用 sing-box `checkConfig` 校验节点配置，避免单个不兼容节点拖垮整组配置
 
 ### 测试与诊断
 
@@ -62,6 +63,7 @@
 - 📡 **TCPing 测试**：直接 TCP 连接测试节点可达性和延迟
 - 🔍 **节点出口 IP 信息查询**：在三点菜单中可基于“当前选择节点”查询出口 IP 详细信息（地区、ASN、欺诈评分、是否住宅/原生IP等），无需先连接主 VPN（通过临时本地 SOCKS 代理走所选节点出口发起查询）
 - 🗑️ **清理不合格节点**：一键隐藏超时/不可用/不达标节点（UI 过滤，不删除数据库数据）
+- 📂 **按节点来源测试**：TCPing、URL Test、流媒体测试、网速测试和择优面板会按当前选择的主/备用节点或收藏节点执行
 - 🛠️ **网络工具箱**：内置 10 种常用网络检测工具（出口检测、IP查询、WebRTC泄漏、DNS泄漏、速度测试等），一键跳转浏览器使用
 
 ### 界面与体验
@@ -74,6 +76,8 @@
 - ⚙️ **其他配置**：侧边栏可进入“其他配置”页面，自定义 TCPing/URL Test/节点 IP 信息/下载测速超时时间、并发数、VPN MTU 等参数
 - 🔋 **后台稳定性提示**：局域网代理页面支持检测/管理“忽略电池优化”，提升长时间代理稳定性
 - 🚀 **启动画面**：可配置启动倒计时时长（支持跳过），可在 `AppConfig.kt` 中设置 `STARTUP_SPLASH_DURATION_SECONDS`
+- 🌙 **夜间模式**：其他配置中可选择跟随系统、浅色或深色主题
+- 💾 **记住上次选择节点**：默认开启，退出 APP 前选择的节点会在下次启动后恢复
 - 🎨 **现代 UI**：基于 Jetpack Compose，Material Design 3 风格，页面使用 NavHost + NavController 路由管理
 - 🔧 **开源可定制**：易于修改 API、品牌和配置
 
@@ -96,6 +100,7 @@
 | **架构模式** | MVVM (ViewModel + StateFlow) |
 | **网络请求** | Retrofit2 + OkHttp3 |
 | **本地存储** | Room Database (SQLCipher 加密) + DataStore |
+| **二维码扫描** | CameraX + ML Kit Barcode Scanning |
 | **VPN 核心** | [sing-box](https://github.com/SagerNet/sing-box) (libbox.aar) |
 | **并发处理** | Kotlin Coroutines |
 
@@ -364,6 +369,23 @@ app/src/main/
 
 ## 高级功能
 
+### 节点列表、收藏与导入
+
+节点列表支持在 `主节点/备用节点` 与 `收藏节点` 两个视图之间切换。收藏节点是独立数据，不会在主/备用订阅刷新后被自动覆盖。
+
+**功能特点**：
+
+- ⭐ 节点卡片延迟标签前的星标可用于收藏或取消收藏
+- 📌 APP 会记录退出前停留的是主/备用节点还是收藏节点
+- ➕ 节点列表搜索按钮左侧提供导入入口，支持从剪切板导入和扫描二维码
+- 🔁 导入到收藏节点前会自动去重，成功后提示实际导入数量
+- 🛡️ 导入收藏节点前会生成单节点 sing-box 测试配置并执行 `Libbox.checkConfig()`，不兼容核心的节点不会写入收藏
+- 🚦 VPN 启动时只会使用当前节点来源生成配置，并在启动前跳过核心不支持的非选中节点；如果所选节点本身不被核心支持，会直接提示错误
+
+> 💡 收藏节点适合长期保留少量手动维护的节点；主/备用节点适合由订阅接口统一刷新。
+
+---
+
 ### 工具箱按钮
 
 主界面右上角“三点”菜单提供以下功能：
@@ -497,14 +519,20 @@ const val NETWORK_TOOLS_JSON = """
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
+| 夜间模式 | 跟随系统 | 可选跟随系统 / 浅色 / 深色 |
 | APP启动默认测试 | 不执行 | 可选不执行 / TCPing / URL Test |
+| 记住上次选择的节点 | 开启 | 退出 APP 前选择的节点会在下次启动后恢复 |
 | VPN连接后获取IP信息 | 关闭 | 仅影响后续新的连接动作 |
+| 定时更新节点信息 | 关闭 | 可设置每隔 X 小时 Y 分钟自动请求节点；从上次请求节点完成后开始计时，并沿用上次使用的主/备用节点来源 |
+| 节点自动重连 | 关闭 | 定时更新后，如当前连接节点的 `server + port` 仍存在，则自动重连到新列表中的对应节点；不存在则保持原连接 |
+| 节点更新通知 | 开启 | 仅控制定时更新节点信息产生的 Toast 提示，不影响手动刷新节点提示 |
 | TCPing 超时 | 3000ms | 最低 500ms |
 | URL Test 超时 | 3000ms | 最低 500ms |
 | 节点IP信息超时 | 12000ms | 最低 1000ms |
 | 单次下载测速超时 | 25000ms | 设为 0 则不限制 |
 | TCPing 并发数 | 16 | 范围 1~128 |
 | URL Test 并发数 | 10 | 范围 1~128 |
+| 带宽测试并发数 | 1 | 范围 1~3，默认保持串行；提高并发可加快粗筛但会增加测速竞争 |
 | 流媒体测试并发数 | 3 | 范围 1~32 |
 | VPN MTU | 9000 | 范围 576~9000，修改后需断开重连 |
 
@@ -617,6 +645,9 @@ IPv6 路由功能允许用户控制 VPN 对 IPv6 网络的处理方式。
 - `unlockPassed`：解锁筛选是否通过
 - `autoTestStatus`：自动化阶段状态（如 `LATENCY_PASSED` / `BANDWIDTH_FILTERED` / `UNLOCK_PASSED`）
 - `autoTestedAt`：自动化测试时间戳
+- `source`：节点来源（`SUBSCRIPTION` / `FAVORITE`）
+- `favoriteSourceNodeId`：从订阅节点收藏而来的来源节点 ID
+- `favoriteCreatedAt`：收藏节点创建时间，用于收藏列表排序
 
 `SettingsRepository` 自动化测试配置项：
 
@@ -640,6 +671,7 @@ IPv6 路由功能允许用户控制 VPN 对 IPv6 网络的处理方式。
 - `preferTestSelectedModeId`
 - `startupDefaultTestMode`
 - `startupDefaultTestChoiceDone`
+- `nodeListCategory`（当前节点列表视图：主/备用节点或收藏节点）
 
 `SettingsRepository` 用户可配置项（"其他配置"页面）：
 
@@ -649,11 +681,20 @@ IPv6 路由功能允许用户控制 VPN 对 IPv6 网络的处理方式。
 - `speedTestDownloadTimeoutMs` — 单次下载测速超时（毫秒）
 - `tcpingConcurrency` — TCPing 并发数
 - `urlTestConcurrency` — URL Test 并发数
+- `bandwidthTestConcurrency` — 带宽测试并发数（1~3，默认 1）
 - `unlockTestConcurrency` — 流媒体测试并发数
 - `vpnMtu` — VPN MTU 值（修改后需断开重连）
 - `nodeIpInfoTestOnVpnStart` — VPN 连接后是否自动获取节点 IP 信息
+- `scheduledNodeUpdateEnabled` — 是否定时更新节点信息
+- `scheduledNodeUpdateHours` — 定时更新间隔小时数（0~168）
+- `scheduledNodeUpdateMinutes` — 定时更新间隔分钟数（0~59）
+- `nodeAutoReconnect` — 节点更新后是否按 `server + port` 自动重连
+- `scheduledNodeUpdateToastEnabled` — 定时更新节点信息后是否显示 Toast 提示
+- `rememberLastSelectedNodeEnabled` — 是否记住上次选择的节点（默认开启）
+- `lastSelectedNodeId` — 上次选择节点 ID
+- `appThemeMode` — APP 主题模式（跟随系统 / 浅色 / 深色）
 
-> ⚠️ 当前数据库使用 SQLCipher 加密存储（version 2），并配置了 `fallbackToDestructiveMigration()`。当 Room 版本升级时，会清空本地节点数据后重建。旧版明文数据库会在升级时自动检测并删除重建。
+> ⚠️ 当前数据库使用 SQLCipher 加密存储（version 3），并配置了 `fallbackToDestructiveMigration()`。当 Room 版本升级时，会清空本地节点数据后重建。旧版明文数据库会在升级时自动检测并删除重建。
 
 ---
 
@@ -973,13 +1014,13 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@server:8388#SS节点
 ```
 
 **字段说明**:
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `version` | String | 版本号（显示用） |
-| `versionCode` | Int | 版本代码（用于比较） |
-| `is_force` | Int | 是否强制更新（1为强制更新） |
-| `downloadUrl` | String | APK 下载地址 |
-| `changelog` | String | 更新日志 |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `version` | String | ❌ | 版本号（显示用） |
+| `versionCode` | Int | ✅ | 版本代码（用于比较） |
+| `is_force` | Int | ❌ | 是否强制更新（1为强制更新） |
+| `downloadUrl` | String | ❌ | APK 下载地址 |
+| `changelog` | String | ❌ | 更新日志 |
 
 **配置位置**: `AppConfig.kt` → `UPDATE_URL`
 
@@ -1001,6 +1042,13 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@server:8388#SS节点
     "backupNodes": {
         "msg": "主节点不可用时，请开启备用节点",
         "url": "https://your-server.com/api/backup-nodes"
+    },
+    "scheduledNodeUpdate": {
+        "enabled": true,
+        "hours": 6,
+        "minutes": 0,
+        "nodeAutoReconnect": true,
+        "toastEnabled": true
     }
 }
 ```
@@ -1016,11 +1064,24 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@server:8388#SS节点
 | `backupNodes` | Object | ❌ | 备用节点配置（可选） |
 | `backupNodes.msg` | String | ❌ | 备用节点提示信息 |
 | `backupNodes.url` | String | ❌ | 备用订阅 URL（必须以 `http://` 或 `https://` 开头） |
+| `scheduledNodeUpdate` | Object | ❌ | 定时更新节点信息配置；存在时优先级高于本地设置 |
+| `scheduledNodeUpdate.enabled` | Boolean | ❌ | 是否开启定时更新节点信息 |
+| `scheduledNodeUpdate.hours` | Number | ❌ | 定时更新间隔小时数，范围 `0~168` |
+| `scheduledNodeUpdate.minutes` | Number | ❌ | 定时更新间隔分钟数，范围 `0~59`；开启且小时/分钟均为 0 时 APP 会按 1 分钟处理 |
+| `scheduledNodeUpdate.nodeAutoReconnect` | Boolean | ❌ | 是否开启节点自动重连；存在时优先级高于本地设置 |
+| `scheduledNodeUpdate.toastEnabled` | Boolean | ❌ | 是否显示定时更新节点信息产生的 Toast；存在时优先级高于本地设置 |
+| `nodeAutoReconnect` | Boolean | ❌ | 旧版兼容字段，推荐改用 `scheduledNodeUpdate.nodeAutoReconnect` |
 
 > 💡 **备用节点说明**：
 > - 当 `backupNodes.url` 存在且格式有效时，侧边栏会显示「备用节点」开关
 > - 备用订阅的响应格式与主订阅相同（Base64 编码的节点链接列表）
 > - 如果不需要备用节点功能，可省略整个 `backupNodes` 字段
+
+> 💡 **定时更新说明**：
+> - 计时从上次请求节点完成后开始；上次请求主节点则继续请求主节点，上次请求备用节点则继续请求备用节点
+> - `scheduledNodeUpdate.nodeAutoReconnect` 开启后，仅当当前连接节点在新列表中存在相同 `server + port` 时才自动重连，否则保持原连接
+> - `scheduledNodeUpdate.toastEnabled` 只控制定时更新节点信息产生的 Toast，不影响手动刷新节点提示
+> - notice 接口下发的 `scheduledNodeUpdate` 只覆盖运行时有效设置，不会改写用户本地保存值
 
 **配置位置**: `AppConfig.kt` → `NOTICE_URL`
 
@@ -1238,6 +1299,16 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 - APP 启动后后台更新规则集：`VpnApplication` → `RuleManager.updateRuleSets()`
 - VPN 启动/重启前确保规则集存在：`BoxVpnService` → `RuleManager.ensureRuleSets()`
 - `ensureRuleSets()` 缺失时会从 assets 兜底拷贝
+
+---
+
+### 节点来源与核心配置校验
+
+- 主/备用节点与收藏节点按 `NodeSource` 独立存储，收藏节点不会被订阅刷新覆盖
+- 节点列表当前视图由 `nodeListCategory` 记录，三点菜单测试、择优面板和 VPN 启动都会按当前来源取节点
+- 收藏导入时会先做解析、去重和 sing-box 单节点配置校验；不兼容核心的节点会被跳过
+- VPN 启动/重启前会再次按当前来源过滤核心不支持的节点，并对最终完整配置执行 `Libbox.checkConfig()`
+- 若当前选中的节点不被核心支持，APP 会提示错误并停止启动，不会自动切换到其他节点
 
 ---
 

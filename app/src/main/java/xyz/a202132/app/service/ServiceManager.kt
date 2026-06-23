@@ -111,6 +111,12 @@ object ServiceManager {
             _downloadTotal.value = BoxVpnService.downloadTotal
             _isServiceRunning.value = true
         } else {
+            if (_vpnState.value == VpnState.CONNECTING && _currentNode.value != null) {
+                _isServiceRunning.value = false
+                _uploadSpeed.value = 0L
+                _downloadSpeed.value = 0L
+                return
+            }
             _vpnState.value = VpnState.DISCONNECTED
             _currentNode.value = null
             _uploadSpeed.value = 0L

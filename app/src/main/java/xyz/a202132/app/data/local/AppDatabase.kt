@@ -15,7 +15,7 @@ import java.io.RandomAccessFile
 
 @Database(
     entities = [Node::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(NodeTypeConverter::class)
