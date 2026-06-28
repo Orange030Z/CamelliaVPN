@@ -38,6 +38,7 @@ import xyz.a202132.app.network.UnlockTestManager
 import xyz.a202132.app.service.BoxVpnService
 import xyz.a202132.app.service.ServiceManager
 import xyz.a202132.app.util.NetworkUtils
+import xyz.a202132.app.util.RuntimeLog
 import xyz.a202132.app.util.SingBoxConfigGenerator
 import xyz.a202132.app.util.UnlockTestsRunner
 import xyz.a202132.app.util.CryptoUtils
@@ -1403,11 +1404,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectNode(node: Node) {
         viewModelScope.launch {
             settingsRepository.setSelectedNodeId(node.id)
+            RuntimeLog.info(tag, "Selected node changed: source=${node.source}, type=${node.type}")
             
             // If VPN is connected, restart to switch to new node
             if (vpnState.value == VpnState.CONNECTED) {
                 // Notify user (Optional)
                 Log.i(tag, "Restarting VPN to apply new Node: ${node.name}")
+                RuntimeLog.info(tag, "Restarting VPN after node selection")
                 ServiceManager.startVpn(getApplication(), node, proxyMode.value)
             }
         }
@@ -1496,6 +1499,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (result == NodeImportResult.IMPORTED) {
                 settingsRepository.setNodeListCategory(NodeListCategory.FAVORITES)
+                RuntimeLog.info(tag, "Imported $importedCount nodes to favorites")
+            } else {
+                RuntimeLog.warn(tag, "Node import finished without new nodes: result=$result")
             }
             onResult(result, importedCount)
         }
@@ -1519,6 +1525,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Libbox.checkConfig(config)
         }.onFailure { error ->
             Log.w(tag, "Skip incompatible imported node: type=${node.type}, server=${node.server}, error=${error.message}")
+            RuntimeLog.warn(tag, "Skip incompatible imported node: type=${node.type}", error)
         }.isSuccess
     }
     
@@ -1545,6 +1552,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun toggleVpn() {
         val node = currentNode.value ?: run {
+            RuntimeLog.warn(tag, "VPN toggle ignored: no selected node")
             _error.value = "请先选择节点"
             return
         }
@@ -1553,11 +1561,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             VpnState.DISCONNECTED -> {
                 // 4. 无网络连接节点时给用户发Toast，但不阻止
                 if (!NetworkUtils.isNetworkAvailable(getApplication())) {
+                    RuntimeLog.warn(tag, "VPN start requested while network is unavailable")
                      _error.value = "当前无网络连接节点！"
                 }
+                RuntimeLog.info(tag, "VPN start requested from UI")
                 ServiceManager.startVpn(getApplication(), node, proxyMode.value)
             }
             VpnState.CONNECTED -> {
+                RuntimeLog.info(tag, "VPN stop requested from UI")
                 ServiceManager.stopVpn(getApplication())
             }
             else -> {
@@ -1573,6 +1584,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (vpnState.value == VpnState.CONNECTED) {
             currentNode.value?.let { node ->
                 Log.i(tag, "Settings changed, restarting VPN to apply...")
+                RuntimeLog.info(tag, "Restarting VPN after settings change")
                 ServiceManager.startVpn(getApplication(), node, proxyMode.value)
             }
         }
@@ -1648,6 +1660,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.onFailure { e ->
             Log.e(tag, "Failed to check notice", e)
+            RuntimeLog.warn(tag, "Failed to check notice", e)
         }
     }
     
@@ -1660,6 +1673,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (trackStartupSplash) {
                 _startupUpdateCheckCompleted.value = false
+            }
+            if (AppConfig.UPDATE_URL.isBlank()) {
+                if (trackStartupSplash) {
+                    _startupUpdateCheckCompleted.value = true
+                }
+                return@launch
             }
             // 节流检查 (自动检查可跳过)
             if (!isAuto) {
@@ -1697,6 +1716,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.onFailure { e ->
                 Log.e(tag, "Failed to check update", e)
+                RuntimeLog.warn(tag, "Failed to check update", e)
             }.also {
                 if (trackStartupSplash) {
                     _startupUpdateCheckCompleted.value = true
@@ -2062,6 +2082,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             try {
+                RuntimeLog.info(
+                    tag,
+                    "Automated test started: latency=${config.latencyEnabled}, bandwidth=${config.bandwidthEnabled}, unlock=${config.unlockEnabled}, limit=${config.nodeLimit}"
+                )
                 _autoTestProgress.value = AutoTestProgress(
                     running = true,
                     stage = AutoTestStage.FETCH_NODES,
@@ -2075,6 +2099,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     fetchingLabel = "请求节点中"
                 ) else true
                 if (!fetchOk) {
+                    RuntimeLog.warn(tag, "Automated test failed: fetch nodes failed")
                     _error.value = "自动化测试失败：请求节点失败"
                     _autoTestProgress.value = AutoTestProgress(
                         running = false,
@@ -2099,6 +2124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val initialSelectedCount = workingNodes.size
                 if (workingNodes.isEmpty()) {
+                    RuntimeLog.warn(tag, "Automated test failed: no available nodes")
                     _error.value = "自动化测试失败：没有可用节点"
                     _autoTestProgress.value = AutoTestProgress(running = false, stage = AutoTestStage.FAILED, message = "没有可用节点")
                     return@launch
@@ -2345,6 +2371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     completed = workingNodes.size,
                     total = initialSelectedCount
                 )
+                RuntimeLog.info(tag, "Automated test completed: kept=${workingNodes.size}, selected=$initialSelectedCount")
                 val currentPreferMode = modeOverride ?: preferTestModes.value.firstOrNull { it.id == preferTestSelectedModeId.value }
                 val snapshotPriority = preferPriority ?: currentPreferMode?.defaultPriority ?: BestNodePriority.LATENCY
                 val sortedSnapshot = sortNodesForSnapshot(
@@ -2371,6 +2398,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Automated test failed", e)
+                RuntimeLog.error(tag, "Automated test failed", e)
                 _autoTestProgress.value = AutoTestProgress(
                     running = false,
                     stage = AutoTestStage.FAILED,

@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +60,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import xyz.a202132.app.AppConfig
 import xyz.a202132.app.data.model.VpnState
 import xyz.a202132.app.ui.components.AppScreenScaffold
+import xyz.a202132.app.ui.theme.Primary
 import xyz.a202132.app.viewmodel.MainViewModel
 import java.net.Inet4Address
 import java.net.InetSocketAddress
@@ -174,7 +177,8 @@ fun LanProxyScreen(
                     }
                     Switch(
                         checked = enabledDraft,
-                        onCheckedChange = { enabledDraft = it }
+                        onCheckedChange = { enabledDraft = it },
+                        colors = visibleSwitchColors()
                     )
                 }
             }
@@ -285,7 +289,8 @@ fun LanProxyScreen(
                     Text("自动选择未占用端口", color = MaterialTheme.colorScheme.onSurface)
                     Switch(
                         checked = autoPortDraft,
-                        onCheckedChange = { autoPortDraft = it }
+                        onCheckedChange = { autoPortDraft = it },
+                        colors = visibleSwitchColors()
                     )
                 }
                 OutlinedTextField(
@@ -318,7 +323,8 @@ fun LanProxyScreen(
                     Text("启用用户名和密码", color = MaterialTheme.colorScheme.onSurface)
                     Switch(
                         checked = authEnabledDraft,
-                        onCheckedChange = { authEnabledDraft = it }
+                        onCheckedChange = { authEnabledDraft = it },
+                        colors = visibleSwitchColors()
                     )
                 }
                 OutlinedTextField(
@@ -411,6 +417,15 @@ private fun LanProxySection(
         }
     }
 }
+
+@Composable
+private fun visibleSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = Color.White,
+    checkedTrackColor = Primary,
+    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+    uncheckedBorderColor = MaterialTheme.colorScheme.outline
+)
 
 private data class LanProxyEndpoint(
     val protocol: String,

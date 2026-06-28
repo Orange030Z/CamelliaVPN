@@ -35,7 +35,7 @@ object AppConfig {
     const val SUBSCRIPTION_URL = "https://your-server.com/api/nodes" // 订阅URL
     const val UPDATE_URL = "https://your-server.com/api/update" // 检查更新URL
     const val NOTICE_URL = "https://your-server.com/api/notice" // 公告通知URL
-    const val WEBSITE_URL = "https://your-website.com" // 官网网站
+    const val WEBSITE_URL = "https://your-website.com" // 官网网站，留空则隐藏侧边栏中的官方网站
 
     // API timeout (milliseconds) for retry-controlled requests
     const val NODE_REQUEST_TIMEOUT_MS = 25000L // 节点请求超时（毫秒）
@@ -43,6 +43,8 @@ object AppConfig {
     const val UPDATE_REQUEST_TIMEOUT_MS = 25000L // 更新请求超时（毫秒）
     
     // Contact
+
+    // 反馈邮箱和反馈链接均留空会自动隐藏侧边栏中的用户反馈
     const val FEEDBACK_EMAIL = "support@your-domain.com" // 反馈邮箱，留空则不跳转
     const val FEEDBACK_URL = "https://github.com/your-username/your-repo/issues"  // 反馈链接，留空则不跳转
     const val GITHUB_URL = "https://github.com/your-username/your-repo"  // 项目源码地址，留空则隐藏关于页相关按钮

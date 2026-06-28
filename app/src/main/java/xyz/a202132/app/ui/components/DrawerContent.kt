@@ -45,11 +45,8 @@ fun DrawerContent(
     onOpenPerAppProxy: () -> Unit,
     onOpenOtherConfig: () -> Unit,
     onOpenLanProxy: () -> Unit,
+    onOpenRuntimeLog: () -> Unit,
     onOpenTestPreferPanel: () -> Unit,
-    bypassLan: Boolean,
-    onToggleBypassLan: (Boolean) -> Unit,
-    ipv6RoutingMode: IPv6RoutingMode,
-    onIPv6RoutingModeChange: (IPv6RoutingMode) -> Unit,
     notice: xyz.a202132.app.data.model.NoticeInfo?,
     backupNodeEnabled: Boolean,
     onToggleBackupNode: (Boolean) -> Unit,
@@ -99,7 +96,6 @@ fun DrawerContent(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    var showIPv6Dialog by remember { mutableStateOf(false) }
     var showBackupNodeConfirmDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     
@@ -134,14 +130,16 @@ fun DrawerContent(
         ) {
             // 菜单项
 
-            DrawerMenuItem(
-                icon = Icons.Outlined.SystemUpdate,
-                title = "检查更新",
-                onClick = {
-                    onCheckUpdate()
-                    onClose()
-                }
-            )
+            if (AppConfig.UPDATE_URL.isNotBlank()) {
+                DrawerMenuItem(
+                    icon = Icons.Outlined.SystemUpdate,
+                    title = "检查更新",
+                    onClick = {
+                        onCheckUpdate()
+                        onClose()
+                    }
+                )
+            }
 
             // 备用节点 (仅在有效时显示)
             if (isBackupNodeVisible) {
@@ -162,19 +160,6 @@ fun DrawerContent(
                 )
             }
 
-            // IPv6 路由菜单项
-            DrawerMenuItem(
-                icon = Icons.Outlined.SettingsEthernet,
-                title = "IPv6 路由",
-                subtitle = when (ipv6RoutingMode) {
-                    IPv6RoutingMode.DISABLED -> "禁用"
-                    IPv6RoutingMode.ENABLED -> "启用"
-                    IPv6RoutingMode.PREFER -> "优先"
-                    IPv6RoutingMode.ONLY -> "仅"
-                },
-                onClick = { showIPv6Dialog = true }
-            )
-
             DrawerMenuItem(
                 icon = Icons.Outlined.Settings,
                 title = "择优面板",
@@ -183,6 +168,15 @@ fun DrawerContent(
                 },
                 onClick = {
                     onOpenTestPreferPanel()
+                    onClose()
+                }
+            )
+
+             DrawerMenuItem(
+                icon = Icons.Outlined.Tune,
+                title = "其他配置",
+                onClick = {
+                    onOpenOtherConfig()
                     onClose()
                 }
             )
@@ -197,21 +191,6 @@ fun DrawerContent(
                 }
             )
 
-            DrawerMenuToggle(
-                icon = Icons.Outlined.Router,
-                title = "绕过局域网",
-                subtitle = if (bypassLan) "已开启" else "已关闭",
-                checked = bypassLan,
-                onCheckedChange = { newValue ->
-                    onToggleBypassLan(newValue)
-                    Toast.makeText(
-                        context,
-                        if (newValue) "已开启绕过局域网" else "已关闭绕过局域网",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            )
-
             DrawerMenuItem(
                 icon = Icons.Outlined.WifiTethering,
                 title = "局域网代理",
@@ -223,46 +202,50 @@ fun DrawerContent(
             )
 
             DrawerMenuItem(
-                icon = Icons.Outlined.Tune,
-                title = "其他配置",
+                icon = Icons.Outlined.Article,
+                title = "运行日志",
                 onClick = {
-                    onOpenOtherConfig()
+                    onOpenRuntimeLog()
                     onClose()
                 }
             )
             
-            DrawerMenuItem(
-                icon = Icons.Outlined.Language,
-                title = "官方网站",
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.WEBSITE_URL))
-                    context.startActivity(intent)
-                    onClose()
-                }
-            )
+            if (AppConfig.WEBSITE_URL.isNotBlank()) {
+                DrawerMenuItem(
+                    icon = Icons.Outlined.Language,
+                    title = "官方网站",
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.WEBSITE_URL))
+                        context.startActivity(intent)
+                        onClose()
+                    }
+                )
+            }
             
             // 问题反馈 - 支持邮箱复制 + 链接跳转
             val hasEmail = AppConfig.FEEDBACK_EMAIL.isNotBlank()
             val hasFeedbackUrl = AppConfig.FEEDBACK_URL.isNotBlank()
             
-            DrawerMenuItem(
-                icon = Icons.Outlined.Email,
-                title = "问题反馈",
-                subtitle = if (hasEmail) AppConfig.FEEDBACK_EMAIL else null,
-                onClick = {
-                    if (hasEmail) {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("email", AppConfig.FEEDBACK_EMAIL)
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "邮箱已复制", Toast.LENGTH_SHORT).show()
+            if (hasEmail || hasFeedbackUrl) {
+                DrawerMenuItem(
+                    icon = Icons.Outlined.Email,
+                    title = "问题反馈",
+                    subtitle = if (hasEmail) AppConfig.FEEDBACK_EMAIL else null,
+                    onClick = {
+                        if (hasEmail) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("email", AppConfig.FEEDBACK_EMAIL)
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, "邮箱已复制", Toast.LENGTH_SHORT).show()
+                        }
+                        if (hasFeedbackUrl) {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.FEEDBACK_URL))
+                            context.startActivity(intent)
+                            onClose()
+                        }
                     }
-                    if (hasFeedbackUrl) {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppConfig.FEEDBACK_URL))
-                        context.startActivity(intent)
-                        onClose()
-                    }
-                }
-            )
+                )
+            }
             
             DrawerMenuItem(
                 icon = Icons.Outlined.Info,
@@ -281,28 +264,6 @@ fun DrawerContent(
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 20.dp)
-        )
-    }
-    
-    // IPv6 路由选项弹窗
-    if (showIPv6Dialog) {
-        IPv6RoutingDialog(
-            currentMode = ipv6RoutingMode,
-            onModeSelected = { mode ->
-                onIPv6RoutingModeChange(mode)
-                showIPv6Dialog = false
-                Toast.makeText(
-                    context,
-                    "IPv6 路由已设置为: " + when (mode) {
-                        IPv6RoutingMode.DISABLED -> "禁用"
-                        IPv6RoutingMode.ENABLED -> "启用"
-                        IPv6RoutingMode.PREFER -> "优先"
-                        IPv6RoutingMode.ONLY -> "仅"
-                    },
-                    Toast.LENGTH_SHORT
-                ).show()
-            },
-            onDismiss = { showIPv6Dialog = false }
         )
     }
     

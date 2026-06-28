@@ -184,7 +184,10 @@ fun PerAppProxyScreen(
                             onCheckedChange = { viewModel.setEnabled(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = Primary
+                                checkedTrackColor = Primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
                             )
                         )
                     }

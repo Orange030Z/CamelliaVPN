@@ -13,6 +13,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,14 +25,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.a202132.app.data.model.AppThemeMode
+import xyz.a202132.app.data.model.IPv6RoutingMode
 import xyz.a202132.app.data.model.VpnState
 import xyz.a202132.app.ui.components.AppScreenScaffold
+import xyz.a202132.app.ui.theme.Primary
 import xyz.a202132.app.viewmodel.MainViewModel
 import xyz.a202132.app.viewmodel.StartupDefaultTestMode
 
@@ -62,6 +66,8 @@ fun OtherConfigScreen(
     val vpnState by viewModel.vpnState.collectAsState()
     val rememberLastSelectedNodeEnabled by viewModel.rememberLastSelectedNodeEnabled.collectAsState()
     val appThemeMode by viewModel.appThemeMode.collectAsState()
+    val bypassLan by viewModel.bypassLan.collectAsState()
+    val ipv6RoutingMode by viewModel.ipv6RoutingMode.collectAsState()
 
     var appThemeModeDraft by remember(appThemeMode) { mutableStateOf(appThemeMode) }
     var startupModeDraft by remember(startupDefaultTestMode) { mutableStateOf(startupDefaultTestMode) }
@@ -184,6 +190,62 @@ fun OtherConfigScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             OtherConfigSection(
+                title = "网络配置",
+                description = ""
+            ) {
+                Text(
+                    text = "IPV6路由",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = ipv6RoutingMode == IPv6RoutingMode.ONLY,
+                        onClick = { viewModel.setIPv6RoutingMode(IPv6RoutingMode.ONLY) },
+                        label = { Text("仅") }
+                    )
+                    FilterChip(
+                        selected = ipv6RoutingMode == IPv6RoutingMode.PREFER,
+                        onClick = { viewModel.setIPv6RoutingMode(IPv6RoutingMode.PREFER) },
+                        label = { Text("优先") }
+                    )
+                    FilterChip(
+                        selected = ipv6RoutingMode == IPv6RoutingMode.ENABLED,
+                        onClick = { viewModel.setIPv6RoutingMode(IPv6RoutingMode.ENABLED) },
+                        label = { Text("启用") }
+                    )
+                    FilterChip(
+                        selected = ipv6RoutingMode == IPv6RoutingMode.DISABLED,
+                        onClick = { viewModel.setIPv6RoutingMode(IPv6RoutingMode.DISABLED) },
+                        label = { Text("禁用") }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "绕过局域网",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = bypassLan,
+                        onCheckedChange = { viewModel.setBypassLan(it) },
+                        colors = visibleSwitchColors()
+                    )
+                }
+            }
+
+            OtherConfigSection(
                 title = "\u591c\u95f4\u6a21\u5f0f",
                 description = ""
             ) {
@@ -260,7 +322,8 @@ fun OtherConfigScreen(
                     }
                     Switch(
                         checked = rememberLastSelectedNodeDraft,
-                        onCheckedChange = { rememberLastSelectedNodeDraft = it }
+                        onCheckedChange = { rememberLastSelectedNodeDraft = it },
+                        colors = visibleSwitchColors()
                     )
                 }
 
@@ -278,7 +341,8 @@ fun OtherConfigScreen(
                     }
                     Switch(
                         checked = nodeIpInfoAutoRunDraft,
-                        onCheckedChange = { nodeIpInfoAutoRunDraft = it }
+                        onCheckedChange = { nodeIpInfoAutoRunDraft = it },
+                        colors = visibleSwitchColors()
                     )
                 }
 
@@ -306,7 +370,8 @@ fun OtherConfigScreen(
                             scheduledNodeUpdateEnabledDraft
                         },
                         onCheckedChange = { scheduledNodeUpdateEnabledDraft = it },
-                        enabled = !effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice
+                        enabled = !effectiveScheduledNodeUpdateSettings.scheduledOverriddenByNotice,
+                        colors = visibleSwitchColors()
                     )
                 }
 
@@ -370,7 +435,8 @@ fun OtherConfigScreen(
                             nodeAutoReconnectDraft
                         },
                         onCheckedChange = { nodeAutoReconnectDraft = it },
-                        enabled = !effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice
+                        enabled = !effectiveScheduledNodeUpdateSettings.reconnectOverriddenByNotice,
+                        colors = visibleSwitchColors()
                     )
                 }
 
@@ -393,7 +459,8 @@ fun OtherConfigScreen(
                             scheduledNodeUpdateToastDraft
                         },
                         onCheckedChange = { scheduledNodeUpdateToastDraft = it },
-                        enabled = !effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice
+                        enabled = !effectiveScheduledNodeUpdateSettings.toastOverriddenByNotice,
+                        colors = visibleSwitchColors()
                     )
                 }
 
@@ -519,6 +586,18 @@ private fun OtherConfigSection(
         content()
     }
 }
+
+@Composable
+private fun visibleSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = Color.White,
+    checkedTrackColor = Primary,
+    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+    uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+    disabledUncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+    disabledUncheckedTrackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+    disabledUncheckedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+)
 
 @Composable
 private fun OtherConfigNumberField(

@@ -9,4 +9,5 @@ object AppRoute {
     const val OTHER_CONFIG = "other_config"
     const val LAN_PROXY = "lan_proxy"
     const val QR_SCANNER = "qr_scanner"
+    const val RUNTIME_LOG = "runtime_log"
 }

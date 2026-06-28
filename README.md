@@ -64,6 +64,7 @@
 - 🔍 **节点出口 IP 信息查询**：在三点菜单中可基于“当前选择节点”查询出口 IP 详细信息（地区、ASN、欺诈评分、是否住宅/原生IP等），无需先连接主 VPN（通过临时本地 SOCKS 代理走所选节点出口发起查询）
 - 🗑️ **清理不合格节点**：一键隐藏超时/不可用/不达标节点（UI 过滤，不删除数据库数据）
 - 📂 **按节点来源测试**：TCPing、URL Test、流媒体测试、网速测试和择优面板会按当前选择的主/备用节点或收藏节点执行
+- 🧾 **运行日志**：侧边栏可查看、刷新、分享、清空 APP 内部运行日志；日志仅记录脱敏后的关键 Info / Warn / Error，不导出节点链接和配置内容
 - 🛠️ **网络工具箱**：内置 10 种常用网络检测工具（出口检测、IP查询、WebRTC泄漏、DNS泄漏、速度测试等），一键跳转浏览器使用
 
 ### 界面与体验
@@ -73,7 +74,7 @@
 - ⏳ **节流保护**：刷新、切换备用节点、检查更新等操作 5 秒内防重复触发
 - 🔔 **公告系统**：支持远程推送公告通知
 - ℹ️ **关于页面**：展示应用版本信息、开源协议、GitHub 仓库链接和免责声明
-- ⚙️ **其他配置**：侧边栏可进入“其他配置”页面，自定义 TCPing/URL Test/节点 IP 信息/下载测速超时时间、并发数、VPN MTU 等参数
+- ⚙️ **其他配置**：侧边栏可进入“其他配置”页面，集中管理 IPv6 路由、绕过局域网、夜间模式、自动执行、超时时间、并发数、VPN MTU 等参数
 - 🔋 **后台稳定性提示**：局域网代理页面支持检测/管理“忽略电池优化”，提升长时间代理稳定性
 - 🚀 **启动画面**：可配置启动倒计时时长（支持跳过），可在 `AppConfig.kt` 中设置 `STARTUP_SPLASH_DURATION_SECONDS`
 - 🌙 **夜间模式**：其他配置中可选择跟随系统、浅色或深色主题
@@ -101,6 +102,7 @@
 | **网络请求** | Retrofit2 + OkHttp3 |
 | **本地存储** | Room Database (SQLCipher 加密) + DataStore |
 | **二维码扫描** | CameraX + ML Kit Barcode Scanning |
+| **运行日志** | 应用内专用 RuntimeLog（私有文件 + FileProvider 分享） |
 | **VPN 核心** | [sing-box](https://github.com/SagerNet/sing-box) (libbox.aar) |
 | **并发处理** | Kotlin Coroutines |
 
@@ -176,11 +178,11 @@ object AppConfig {
     // 节点订阅 API
     const val SUBSCRIPTION_URL = "https://your-server.com/api/nodes"
     // 版本更新 API
-    const val UPDATE_URL = "https://your-server.com/api/update"
+    const val UPDATE_URL = "https://your-server.com/api/update" // 留空则不检查更新且隐藏入口
     // 公告通知 API
     const val NOTICE_URL = "https://your-server.com/api/notice"
     // 官网地址
-    const val WEBSITE_URL = "https://your-server.com"
+    const val WEBSITE_URL = "https://your-server.com" // 留空则隐藏“官方网站”
 
     // API 请求超时（毫秒）
     const val NODE_REQUEST_TIMEOUT_MS = 25000L    // 节点请求超时
@@ -188,9 +190,9 @@ object AppConfig {
     const val UPDATE_REQUEST_TIMEOUT_MS = 25000L  // 更新请求超时
 
     // 联系方式
-    const val FEEDBACK_EMAIL = ""  // 反馈邮箱，留空则不跳转
+    const val FEEDBACK_EMAIL = ""  // 反馈邮箱，留空则不显示邮箱复制
     // 反馈链接（GitHub Issues）
-    const val FEEDBACK_URL = "https://github.com/your-username/your-repo/issues"
+    const val FEEDBACK_URL = "https://github.com/your-username/your-repo/issues" // 与邮箱均留空则隐藏“问题反馈”
     // 项目源码地址（留空则隐藏关于页相关按钮）
     const val GITHUB_URL = "https://github.com/your-username/your-repo"
 
@@ -269,6 +271,7 @@ app/src/main/java/xyz/a202132/app/
 │   │   ├── AppDatabase.kt       # Room 数据库定义
 │   │   └── NodeDao.kt           # 节点数据访问对象
 │   ├── model/                    # 数据模型
+│   │   ├── AppThemeMode.kt       # APP 显示主题模式枚举
 │   │   ├── ApiModels.kt         # API 响应模型
 │   │   ├── Node.kt              # 节点数据模型
 │   │   ├── NodeType.kt          # 代理协议类型枚举
@@ -314,8 +317,10 @@ app/src/main/java/xyz/a202132/app/
 │   ├── screens/                  # 页面（通过 NavHost + NavController 管理）
 │   │   ├── MainScreen.kt        # 主界面
 │   │   ├── LanProxyScreen.kt    # 局域网代理设置页面
-│   │   ├── OtherConfigScreen.kt # 其他配置页面（超时/并发/MTU 等）
+│   │   ├── RuntimeLogScreen.kt  # 运行日志页面
+│   │   ├── OtherConfigScreen.kt # 其他配置页面（网络/主题/自动执行/超时/并发/MTU）
 │   │   ├── PerAppProxyScreen.kt # 分应用代理设置界面
+│   │   ├── QrScannerScreen.kt   # 二维码扫描导入页面
 │   │   └── UnlockTestScreen.kt  # 流媒体解锁测试页面
 │   └── theme/                    # 主题配置
 │       ├── Color.kt             # 颜色定义
@@ -326,6 +331,7 @@ app/src/main/java/xyz/a202132/app/
 │   ├── DatabasePassphraseManager.kt # SQLCipher 数据库密钥管理（Android Keystore）
 │   ├── NetworkUtils.kt          # 网络状态检测工具
 │   ├── RuleManager.kt           # 智能分流规则管理
+│   ├── RuntimeLog.kt            # 应用内运行日志（脱敏、滚动保留、导出）
 │   ├── SignatureVerifier.kt     # APK 签名验证（JNI 桥接）
 │   ├── SingBoxConfigGenerator.kt # sing-box 配置生成器
 │   └── UnlockTestsRunner.kt      # UnlockTests 二进制执行器
@@ -515,10 +521,12 @@ const val NETWORK_TOOLS_JSON = """
 
 ### 其他配置
 
-"其他配置"页面集中管理各类测试超时、并发数和网络参数，修改后点击"保存"生效。
+"其他配置"页面集中管理网络开关、显示主题、自动执行、测试超时、并发数和 VPN 参数。顶部网络区（IPv6 路由、绕过局域网）点击后立即生效；其余输入型参数修改后点击"保存"生效。
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
+| IPv6 路由 | 禁用 | 可选仅 / 优先 / 启用 / 禁用，位于其他配置顶部 |
+| 绕过局域网 | 开启 | 局域网流量直连，位于其他配置顶部 |
 | 夜间模式 | 跟随系统 | 可选跟随系统 / 浅色 / 深色 |
 | APP启动默认测试 | 不执行 | 可选不执行 / TCPing / URL Test |
 | 记住上次选择的节点 | 开启 | 退出 APP 前选择的节点会在下次启动后恢复 |
@@ -540,6 +548,23 @@ const val NETWORK_TOOLS_JSON = """
 
 ---
 
+### 运行日志
+
+运行日志用于用户反馈问题时导出必要诊断信息，入口位于侧边栏。
+
+**功能特点**：
+
+- 顶部提供刷新、分享、清空三个图标按钮
+- 分享时生成 `FireflyVPN-runtime-日期-hash.log`，通过 `FileProvider` 分享
+- 日志来源为 APP 内部专用 `RuntimeLog`，不直接导出 Android logcat
+- 默认最多保留最新 1000 条日志；单条消息会截断，旧日志会自动滚动清理
+- 仅记录脱敏后的关键 Info / Warn / Error，例如 APP 启动、VPN 启停、核心兼容校验、自动测试摘要、导入结果、更新/公告请求失败、sing-box warn/error 等
+- 不输出节点链接、生成的 sing-box 配置、server/IP/domain/port、UUID/password/token/key、分应用代理包名列表等敏感信息
+
+**设置位置**：侧边栏 → 运行日志
+
+---
+
 ### 绕过局域网
 
 开启后，局域网流量将绕过 VPN 直连，确保内网设备访问正常。
@@ -553,7 +578,7 @@ const val NETWORK_TOOLS_JSON = """
 | `192.168.0.0/16` | C类私有网络 |
 | `169.254.0.0/16` | 链路本地地址 |
 
-**设置位置**：侧边栏 → 绕过局域网（默认开启）
+**设置位置**：侧边栏 → 其他配置 → 网络 → 绕过局域网（默认开启）
 
 ---
 
@@ -606,7 +631,7 @@ IPv6 路由功能允许用户控制 VPN 对 IPv6 网络的处理方式。
 > - 节点本身需要支持 IPv6 才能正常使用 IPv6 路由功能
 > - 可通过 [test-ipv6.com](https://test-ipv6.com) 测试 IPv6 连通性
 
-**设置位置**：侧边栏 → IPv6 路由
+**设置位置**：侧边栏 → 其他配置 → 网络 → IPv6 路由
 
 ---
 
@@ -1368,6 +1393,8 @@ target_link_options(native-lib PRIVATE "-Wl,-z,max-page-size=16384")
 ### 安全说明（务必阅读）
 
 - 订阅解析日志已减少敏感信息输出，不再记录完整节点链接原文
+- 运行日志使用 APP 内部专用日志仓库，写入前会脱敏 URL、代理链接、IP、域名、UUID、密码、token、key 等敏感片段
+- 分享的运行日志文件生成在缓存目录，仅用于用户主动分享问题诊断信息
 - Native 层密钥与签名目标值已做运行时重组，降低"直接明文检索"命中概率
 - 但这类客户端静态保护仅能提升逆向成本，不能替代真正的密钥托管与服务端校验策略
 

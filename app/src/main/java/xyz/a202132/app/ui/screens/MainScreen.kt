@@ -48,7 +48,8 @@ fun MainScreen(
     onOpenNetworkToolbox: () -> Unit = {},
     onOpenUnlockTest: () -> Unit = {},
     onOpenOtherConfig: () -> Unit = {},
-    onOpenLanProxy: () -> Unit = {}
+    onOpenLanProxy: () -> Unit = {},
+    onOpenRuntimeLog: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -88,12 +89,6 @@ fun MainScreen(
     val downloadSpeed by viewModel.downloadSpeed.collectAsState()
     val uploadTotal by viewModel.uploadTotal.collectAsState()
     val downloadTotal by viewModel.downloadTotal.collectAsState()
-    
-    // 绕过局域网设置
-    val bypassLan by viewModel.bypassLan.collectAsState()
-    
-    // IPv6 路由设置
-    val ipv6RoutingMode by viewModel.ipv6RoutingMode.collectAsState()
     
     // 备用节点设置
     val backupNodeEnabled by viewModel.backupNodeEnabled.collectAsState()
@@ -175,11 +170,8 @@ fun MainScreen(
                     onOpenPerAppProxy = onOpenPerAppProxy,
                     onOpenOtherConfig = onOpenOtherConfig,
                     onOpenLanProxy = onOpenLanProxy,
+                    onOpenRuntimeLog = onOpenRuntimeLog,
                     onOpenTestPreferPanel = { showTestPreferPanelPage = true },
-                    bypassLan = bypassLan,
-                    onToggleBypassLan = { viewModel.setBypassLan(it) },
-                    ipv6RoutingMode = ipv6RoutingMode,
-                    onIPv6RoutingModeChange = { viewModel.setIPv6RoutingMode(it) },
                     notice = noticeConfig, // Use noticeConfig for Drawer (Backup Node visibility)
                     backupNodeEnabled = backupNodeEnabled,
                     onToggleBackupNode = { viewModel.setBackupNodeEnabled(it) },

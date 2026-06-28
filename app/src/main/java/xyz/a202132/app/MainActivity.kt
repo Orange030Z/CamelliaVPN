@@ -41,6 +41,7 @@ import xyz.a202132.app.ui.screens.LanProxyScreen
 import xyz.a202132.app.ui.screens.OtherConfigScreen
 import xyz.a202132.app.ui.screens.PerAppProxyScreen
 import xyz.a202132.app.ui.screens.QrScannerScreen
+import xyz.a202132.app.ui.screens.RuntimeLogScreen
 import xyz.a202132.app.ui.screens.UnlockTestScreen
 import xyz.a202132.app.ui.theme.FireflyVPNTheme
 import xyz.a202132.app.viewmodel.MainViewModel
@@ -155,7 +156,8 @@ class MainActivity : ComponentActivity() {
                                     onOpenNetworkToolbox = { navigateTo(AppRoute.NETWORK_TOOLBOX) },
                                     onOpenUnlockTest = { navigateTo(AppRoute.UNLOCK_TEST) },
                                     onOpenOtherConfig = { navigateTo(AppRoute.OTHER_CONFIG) },
-                                    onOpenLanProxy = { navigateTo(AppRoute.LAN_PROXY) }
+                                    onOpenLanProxy = { navigateTo(AppRoute.LAN_PROXY) },
+                                    onOpenRuntimeLog = { navigateTo(AppRoute.RUNTIME_LOG) }
                                 )
                             }
 
@@ -241,6 +243,12 @@ class MainActivity : ComponentActivity() {
                             composable(AppRoute.LAN_PROXY) {
                                 LanProxyScreen(
                                     viewModel = viewModel,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+
+                            composable(AppRoute.RUNTIME_LOG) {
+                                RuntimeLogScreen(
                                     onBack = { navController.popBackStack() }
                                 )
                             }

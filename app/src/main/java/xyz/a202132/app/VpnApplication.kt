@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import xyz.a202132.app.util.RuleManager
+import xyz.a202132.app.util.RuntimeLog
 import xyz.a202132.app.util.SignatureVerifier
 
 class VpnApplication : Application() {
@@ -20,6 +21,8 @@ class VpnApplication : Application() {
         SignatureVerifier.verifySignature(this)
         
         instance = this
+        RuntimeLog.init(this)
+        RuntimeLog.info("App", "Application started")
         
         // 后台更新规则集（不阻塞启动，失败不影响使用）
         applicationScope.launch(Dispatchers.IO) {
@@ -27,6 +30,7 @@ class VpnApplication : Application() {
                 RuleManager.updateRuleSets(this@VpnApplication)
             } catch (e: Exception) {
                 Log.w("VpnApplication", "Background rule set update failed", e)
+                RuntimeLog.warn("RuleManager", "Background rule set update failed", e)
             }
         }
     }
