@@ -25,7 +25,6 @@ import xyz.a202132.app.util.SingBoxConfigGenerator
 import xyz.a202132.app.util.RuleManager
 import xyz.a202132.app.util.RuntimeLog
 import java.io.File
-import java.lang.reflect.Method
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import kotlinx.coroutines.flow.first
@@ -35,19 +34,15 @@ import kotlinx.coroutines.flow.first
  */
 class BoxVpnService : VpnService() {
     private enum class TrafficSource {
+        WAITING_FOR_CORE,
         SING_BOX_STATUS,
         TRAFFIC_STATS
     }
 
-    private data class ParsedTrafficStatus(
-        val uploadSpeed: Long,
-        val downloadSpeed: Long,
-        val uploadTotal: Long,
-        val downloadTotal: Long
-    )
-    
     companion object {
         private const val TAG = "BoxVpnService"
+        private const val CORE_STATUS_FRESH_MS = 3_500L
+        private const val CORE_STATUS_STARTUP_GRACE_MS = 6_000L
         
         const val ACTION_START = "xyz.a202132.app.START_VPN"
         const val ACTION_STOP = "xyz.a202132.app.STOP_VPN"
@@ -76,9 +71,18 @@ class BoxVpnService : VpnService() {
         private var instance: BoxVpnService? = null
         @Volatile private var currentLanProxyHttpPort: Int? = null
         @Volatile private var currentLanProxySocksPort: Int? = null
+        @Volatile private var currentInternalSocksPort: Int? = null
         
         fun selectNode(nodeId: String) {
             instance?.selectNodeInternal(nodeId)
+        }
+
+        /**
+         * 返回主 VPN 核心的本机 SOCKS 端口。
+         * 仅用于让应用内测试复用当前 VPN 实例，避免另起核心造成重复或缺失统计。
+         */
+        fun getInternalSocksPort(): Int? {
+            return currentInternalSocksPort?.takeIf { isRunning }
         }
     }
     
@@ -210,20 +214,30 @@ class BoxVpnService : VpnService() {
                     AppConfig.VPN_MTU
                 }
                 val lanProxy = readLanProxyConfig(settingsRepo, keepConfiguredPort = keepLanProxyPort)
+                val internalSocksPort = pickFreeInternalSocksPort(lanProxy)
                 
-                Log.d(TAG, "Generating config with ${allNodes.size} nodes, selected: $selectedNodeId, bypassLan: $bypassLan, ipv6Mode: $ipv6Mode, mtu: $vpnMtu, lanProxy: ${lanProxy.enabled}:http=${lanProxy.port},socks=${lanProxy.socksPort}")
+                Log.d(TAG, "Generating config with ${allNodes.size} nodes, selected: $selectedNodeId, bypassLan: $bypassLan, ipv6Mode: $ipv6Mode, mtu: $vpnMtu, lanProxy: ${lanProxy.enabled}:http=${lanProxy.port},socks=${lanProxy.socksPort}, internalSocks=$internalSocksPort")
 
                 // 3. 确保规则集文件存在（从 assets 拷贝兜底）
                 RuleManager.ensureRuleSets(application)
 
                 // 4. 生成sing-box配置
-                val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu, lanProxy)
+                val config = configGenerator.generateConfig(
+                    allNodes,
+                    selectedNodeId,
+                    proxyMode,
+                    bypassLan,
+                    ipv6Mode,
+                    vpnMtu,
+                    lanProxy,
+                    internalSocksPort
+                )
                 Libbox.checkConfig(config)
                 deleteLegacyConfigFile()
                 logConfigForDebug(config)
 
                 // 初始化 libbox
-                initializeLibbox(config, nodeName)
+                initializeLibbox(config, nodeName, internalSocksPort)
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start VPN", e)
@@ -236,7 +250,11 @@ class BoxVpnService : VpnService() {
         }
     }
     
-    private suspend fun initializeLibbox(configContent: String, nodeName: String) {
+    private suspend fun initializeLibbox(
+        configContent: String,
+        nodeName: String,
+        internalSocksPort: Int
+    ) {
         withContext(Dispatchers.IO) {
             try {
                 // 设置工作目录
@@ -293,6 +311,7 @@ class BoxVpnService : VpnService() {
                 startTrafficMonitor()
                 
                 withContext(Dispatchers.Main) {
+                    currentInternalSocksPort = internalSocksPort
                     isRunning = true
                     currentNodeName = nodeName
 
@@ -314,12 +333,14 @@ class BoxVpnService : VpnService() {
     // Command Client 相关
     private var commandClientJob: kotlinx.coroutines.Job? = null
     private var commandClient: io.nekohasekai.libbox.CommandClient? = null
-    @Volatile private var currentTrafficSource: TrafficSource = TrafficSource.TRAFFIC_STATS
+    @Volatile private var currentTrafficSource: TrafficSource = TrafficSource.WAITING_FOR_CORE
     @Volatile private var lastSingBoxTrafficStatusAt: Long = 0L
-    private var statusShapeLogged = false
+    @Volatile private var trafficStatsFallbackActive = false
+    private var trafficMonitorStartedAt = 0L
+    private var fallbackUploadTotalOffset = 0L
+    private var fallbackDownloadTotalOffset = 0L
     
     private fun startCommandClient() {
-        statusShapeLogged = false
         commandClientJob = serviceScope.launch {
             try {
                 delay(1000)  // 等待服务启动
@@ -333,6 +354,7 @@ class BoxVpnService : VpnService() {
                 val options = io.nekohasekai.libbox.CommandClientOptions().apply {
                     addCommand(Libbox.CommandLog)
                     addCommand(Libbox.CommandGroup) // 监听组变化（延迟测试结果）
+                    addCommand(Libbox.CommandStatus)
                     statusInterval = 1_000_000_000L // 1秒，用于流量状态更新
                 }
                 
@@ -470,8 +492,17 @@ class BoxVpnService : VpnService() {
     private var baseRxBytes = 0L
     
     private fun startTrafficMonitor() {
-        currentTrafficSource = TrafficSource.TRAFFIC_STATS
-        Log.i(TAG, "Traffic source -> ${TrafficSource.TRAFFIC_STATS.name} (hybrid init)")
+        currentTrafficSource = TrafficSource.WAITING_FOR_CORE
+        lastSingBoxTrafficStatusAt = 0L
+        trafficStatsFallbackActive = false
+        trafficMonitorStartedAt = System.currentTimeMillis()
+        fallbackUploadTotalOffset = 0L
+        fallbackDownloadTotalOffset = 0L
+        uploadSpeed = 0L
+        downloadSpeed = 0L
+        uploadTotal = 0L
+        downloadTotal = 0L
+        Log.i(TAG, "Traffic source -> ${TrafficSource.WAITING_FOR_CORE.name}")
         // 记录连接开始时的流量基准
         val uid = android.os.Process.myUid()
         baseTxBytes = android.net.TrafficStats.getUidTxBytes(uid)
@@ -486,7 +517,12 @@ class BoxVpnService : VpnService() {
                 
                 try {
                     val currentTime = System.currentTimeMillis()
-                    val singBoxFresh = lastSingBoxTrafficStatusAt > 0L && (currentTime - lastSingBoxTrafficStatusAt) <= 3500L
+                    val singBoxFresh =
+                        lastSingBoxTrafficStatusAt > 0L &&
+                            (currentTime - lastSingBoxTrafficStatusAt) <= CORE_STATUS_FRESH_MS
+                    val waitingForFirstCoreStatus =
+                        lastSingBoxTrafficStatusAt == 0L &&
+                            (currentTime - trafficMonitorStartedAt) < CORE_STATUS_STARTUP_GRACE_MS
                     val currentTxBytes = android.net.TrafficStats.getUidTxBytes(uid)
                     val currentRxBytes = android.net.TrafficStats.getUidRxBytes(uid)
                     
@@ -497,9 +533,35 @@ class BoxVpnService : VpnService() {
                             lastTxBytes = currentTxBytes
                             lastRxBytes = currentRxBytes
                             lastUpdateTime = currentTime
+                            trafficStatsFallbackActive = false
                             continue
                         }
-                        updateTrafficSource(TrafficSource.TRAFFIC_STATS, "sing-box status stale")
+                        if (waitingForFirstCoreStatus) {
+                            // 启动阶段只等待核心，不能先发布一帧 UID 流量，否则 UI 会闪现
+                            // 本应用自身及本地回环产生的、并不属于 VPN 核心的数据。
+                            baseTxBytes = currentTxBytes
+                            baseRxBytes = currentRxBytes
+                            lastTxBytes = currentTxBytes
+                            lastRxBytes = currentRxBytes
+                            lastUpdateTime = currentTime
+                            continue
+                        }
+
+                        if (!trafficStatsFallbackActive) {
+                            // 从最后一份核心累计值继续计数，避免用整个 UID 会话值覆盖核心值。
+                            baseTxBytes = currentTxBytes
+                            baseRxBytes = currentRxBytes
+                            lastTxBytes = currentTxBytes
+                            lastRxBytes = currentRxBytes
+                            lastUpdateTime = currentTime
+                            fallbackUploadTotalOffset = uploadTotal
+                            fallbackDownloadTotalOffset = downloadTotal
+                            uploadSpeed = 0L
+                            downloadSpeed = 0L
+                            trafficStatsFallbackActive = true
+                            updateTrafficSource(TrafficSource.TRAFFIC_STATS, "sing-box status stale")
+                            continue
+                        }
                         
                         val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
                         val activeNetwork = cm.activeNetwork
@@ -520,8 +582,8 @@ class BoxVpnService : VpnService() {
                                 val txTotal = currentTxBytes - baseTxBytes
                                 val rxTotal = currentRxBytes - baseRxBytes
                                  
-                                uploadTotal = if (txTotal >= 0) txTotal else 0
-                                downloadTotal = if (rxTotal >= 0) rxTotal else 0
+                                uploadTotal = fallbackUploadTotalOffset + txTotal.coerceAtLeast(0L)
+                                downloadTotal = fallbackDownloadTotalOffset + rxTotal.coerceAtLeast(0L)
 
                                 // 仅在有网络时更新基准值
                                 lastTxBytes = currentTxBytes
@@ -558,33 +620,26 @@ class BoxVpnService : VpnService() {
         trafficMonitorJob?.cancel()
         trafficMonitorJob = null
         lastSingBoxTrafficStatusAt = 0L
-        currentTrafficSource = TrafficSource.TRAFFIC_STATS
+        trafficMonitorStartedAt = 0L
+        trafficStatsFallbackActive = false
+        fallbackUploadTotalOffset = 0L
+        fallbackDownloadTotalOffset = 0L
+        currentTrafficSource = TrafficSource.WAITING_FOR_CORE
         Log.d(TAG, "Traffic monitor stopped")
     }
 
     private fun handleSingBoxTrafficStatus(message: io.nekohasekai.libbox.StatusMessage) {
         try {
-            val parsed = parseTrafficStatusReflectively(message)
-            if (parsed == null) {
-                if (!statusShapeLogged) {
-                    statusShapeLogged = true
-                    val methods = message.javaClass.methods
-                        .map(Method::getName)
-                        .distinct()
-                        .sorted()
-                        .take(80)
-                    Log.w(TAG, "Traffic source fallback to TRAFFIC_STATS: unable to parse StatusMessage traffic fields. methods=$methods")
-                }
-                return
-            }
+            if (!message.trafficAvailable) return
 
             lastSingBoxTrafficStatusAt = System.currentTimeMillis()
+            trafficStatsFallbackActive = false
             updateTrafficSource(TrafficSource.SING_BOX_STATUS, "writeStatus")
 
-            uploadSpeed = parsed.uploadSpeed.coerceAtLeast(0L)
-            downloadSpeed = parsed.downloadSpeed.coerceAtLeast(0L)
-            uploadTotal = parsed.uploadTotal.coerceAtLeast(0L)
-            downloadTotal = parsed.downloadTotal.coerceAtLeast(0L)
+            uploadSpeed = message.uplink.coerceAtLeast(0L)
+            downloadSpeed = message.downlink.coerceAtLeast(0L)
+            uploadTotal = message.uplinkTotal.coerceAtLeast(0L)
+            downloadTotal = message.downlinkTotal.coerceAtLeast(0L)
 
             serviceScope.launch(Dispatchers.Main) {
                 ServiceManager.notifyStateChange()
@@ -599,76 +654,9 @@ class BoxVpnService : VpnService() {
         if (currentTrafficSource == source) return
         currentTrafficSource = source
         Log.i(TAG, "Traffic source -> ${source.name} ($reason)")
+        RuntimeLog.info(TAG, "Traffic statistics source changed: source=${source.name}, reason=$reason")
     }
 
-    private fun parseTrafficStatusReflectively(status: Any): ParsedTrafficStatus? {
-        extractTrafficStatusFromObject(status)?.let { return it }
-
-        val nestedMethods = status.javaClass.methods
-            .filter { it.parameterCount == 0 && it.returnType != Void.TYPE }
-            .filter { it.declaringClass != Any::class.java }
-            .filter {
-                val n = it.name.lowercase()
-                n.contains("traffic") || n.contains("stats") || n.contains("network") || n.contains("status")
-            }
-
-        for (method in nestedMethods) {
-            val nested = runCatching { method.invoke(status) }.getOrNull() ?: continue
-            extractTrafficStatusFromObject(nested)?.let { return it }
-        }
-        return null
-    }
-
-    private fun extractTrafficStatusFromObject(obj: Any): ParsedTrafficStatus? {
-        val upSpeed = readNumberByNames(
-            obj,
-            "uploadSpeed", "uplinkSpeed", "upSpeed", "txSpeed", "upRate", "uplink", "uplinkBps", "uploadBps"
-        )
-        val downSpeed = readNumberByNames(
-            obj,
-            "downloadSpeed", "downlinkSpeed", "downSpeed", "rxSpeed", "downRate", "downlink", "downlinkBps", "downloadBps"
-        )
-        val upTotal = readNumberByNames(
-            obj,
-            "uploadTotal", "uplinkTotal", "upTotal", "txTotal", "totalUpload", "totalUp", "uploadTotalBytes", "uplinkTotalBytes"
-        )
-        val downTotal = readNumberByNames(
-            obj,
-            "downloadTotal", "downlinkTotal", "downTotal", "rxTotal", "totalDownload", "totalDown", "downloadTotalBytes", "downlinkTotalBytes"
-        )
-
-        if (upSpeed == null || downSpeed == null || upTotal == null || downTotal == null) return null
-        return ParsedTrafficStatus(upSpeed, downSpeed, upTotal, downTotal)
-    }
-
-    private fun readNumberByNames(target: Any, vararg names: String): Long? {
-        val methods = target.javaClass.methods
-        for (name in names) {
-            val lower = name.lowercase()
-            val method = methods.firstOrNull { m ->
-                if (m.parameterCount != 0 || m.returnType == Void.TYPE) return@firstOrNull false
-                val mn = m.name.lowercase()
-                mn == lower || mn == "get$lower"
-            }
-            if (method != null) {
-                val value = runCatching { method.invoke(target) }.getOrNull()
-                (value as? Number)?.toLong()?.let { return it }
-            }
-
-            val field = runCatching {
-                target.javaClass.declaredFields.firstOrNull { it.name.equals(name, ignoreCase = true) }
-            }.getOrNull()
-            if (field != null) {
-                val value = runCatching {
-                    field.isAccessible = true
-                    field.get(target)
-                }.getOrNull()
-                (value as? Number)?.toLong()?.let { return it }
-            }
-        }
-        return null
-    }
-    
     private fun logConfigForDebug(config: String) {
         // 避免日志过长，只打印前1000字符
         if (config.length > 1000) {
@@ -870,6 +858,7 @@ class BoxVpnService : VpnService() {
                         AppConfig.VPN_MTU
                     }
                     val lanProxy = readLanProxyConfig(settingsRepo, keepConfiguredPort = true)
+                    val internalSocksPort = pickFreeInternalSocksPort(lanProxy)
 
                     // 获取选中的节点
                     val selectedNodeId = try {
@@ -902,15 +891,36 @@ class BoxVpnService : VpnService() {
 
                     RuleManager.ensureRuleSets(application)
                     
-                    val config = configGenerator.generateConfig(allNodes, selectedNodeId, proxyMode, bypassLan, ipv6Mode, vpnMtu, lanProxy)
+                    val config = configGenerator.generateConfig(
+                        allNodes,
+                        selectedNodeId,
+                        proxyMode,
+                        bypassLan,
+                        ipv6Mode,
+                        vpnMtu,
+                        lanProxy,
+                        internalSocksPort
+                    )
                     Libbox.checkConfig(config)
                     deleteLegacyConfigFile()
                     logConfigForDebug(config)
 
-                    initializeLibbox(config, savedNodeName)
+                    initializeLibbox(config, savedNodeName, internalSocksPort)
                 }
             }
         }
+    }
+
+    private fun pickFreeInternalSocksPort(lanProxy: LanProxyConfig): Int {
+        repeat(20) {
+            val port = ServerSocket(0).use { it.localPort }
+            val conflictsWithLanProxy = lanProxy.enabled &&
+                (port == lanProxy.port || port == lanProxy.socksPort)
+            if (!conflictsWithLanProxy) {
+                return port
+            }
+        }
+        throw IllegalStateException("无法分配内部测速代理端口")
     }
 
     private suspend fun readLanProxyConfig(
@@ -989,6 +999,7 @@ class BoxVpnService : VpnService() {
     
     private fun cleanupResources() {
         try {
+            currentInternalSocksPort = null
             // 保存引用以便后续清理
             val pi = platformInterface
             platformInterface = null

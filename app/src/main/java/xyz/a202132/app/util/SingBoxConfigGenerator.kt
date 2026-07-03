@@ -43,7 +43,8 @@ class SingBoxConfigGenerator {
         bypassLan: Boolean = true,
         ipv6Mode: IPv6RoutingMode = IPv6RoutingMode.DISABLED,
         mtu: Int = AppConfig.VPN_MTU,
-        lanProxy: LanProxyConfig = LanProxyConfig()
+        lanProxy: LanProxyConfig = LanProxyConfig(),
+        internalSocksPort: Int? = null
     ): String {
         // 如果没有节点，生成一个空配置防止崩溃
         if (nodes.isEmpty()) {
@@ -62,7 +63,7 @@ class SingBoxConfigGenerator {
                 
             add("log", createLogConfig())
             add("dns", createDnsConfig(proxyMode, nodeDomains, ipv6Mode))
-            add("inbounds", createInbounds(ipv6Mode, mtu, lanProxy))
+            add("inbounds", createInbounds(ipv6Mode, mtu, lanProxy, internalSocksPort))
             add("outbounds", createOutbounds(nodes, selectedNodeId))
             add("route", createRoute(proxyMode, nodeDomains, nodeIPs, bypassLan))
             add("experimental", createExperimental())
@@ -73,7 +74,15 @@ class SingBoxConfigGenerator {
     private fun generateEmptyConfig(): String {
         val config = JsonObject().apply {
             add("log", createLogConfig())
-            add("inbounds", createInbounds(IPv6RoutingMode.DISABLED, AppConfig.VPN_MTU, LanProxyConfig()))
+            add(
+                "inbounds",
+                createInbounds(
+                    IPv6RoutingMode.DISABLED,
+                    AppConfig.VPN_MTU,
+                    LanProxyConfig(),
+                    null
+                )
+            )
             add("outbounds", JsonArray().apply {
                 add(JsonObject().apply {
                     addProperty("type", "direct")
@@ -293,7 +302,12 @@ class SingBoxConfigGenerator {
         }
     }
     
-    private fun createInbounds(ipv6Mode: IPv6RoutingMode, mtu: Int, lanProxy: LanProxyConfig): JsonArray {
+    private fun createInbounds(
+        ipv6Mode: IPv6RoutingMode,
+        mtu: Int,
+        lanProxy: LanProxyConfig,
+        internalSocksPort: Int?
+    ): JsonArray {
         return JsonArray().apply {
             add(JsonObject().apply {
                 addProperty("type", "tun")
@@ -332,6 +346,18 @@ class SingBoxConfigGenerator {
             if (lanProxy.enabled) {
                 add(createLanProxyInbound("http", "lan-http-in", lanProxy.port, lanProxy))
                 add(createLanProxyInbound("socks", "lan-socks-in", lanProxy.socksPort, lanProxy))
+            }
+
+            // 本应用被排除在 Android VPN TUN 之外。提供一个仅监听回环地址的
+            // SOCKS 入站，让“当前已连接节点”的测速流量进入同一个 sing-box
+            // 实例，从而由核心 TrafficManager 准确统计，且不会暴露到局域网。
+            internalSocksPort?.let { port ->
+                add(JsonObject().apply {
+                    addProperty("type", "socks")
+                    addProperty("tag", "internal-socks-in")
+                    addProperty("listen", "127.0.0.1")
+                    addProperty("listen_port", port)
+                })
             }
         }
     }

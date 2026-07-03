@@ -61,6 +61,8 @@ import xyz.a202132.app.data.model.Node
 import xyz.a202132.app.network.SpeedTestResult
 import xyz.a202132.app.network.SpeedTestService
 import xyz.a202132.app.network.UnlockTestManager
+import xyz.a202132.app.service.BoxVpnService
+import xyz.a202132.app.service.ServiceManager
 import xyz.a202132.app.ui.theme.Primary
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -134,11 +136,18 @@ fun SpeedTestDialog(
             try {
                 val createdService = if (targetMode == SpeedTestTargetMode.NODE) {
                     val targetNode = node ?: throw IllegalStateException("当前没有可用节点")
-                    val port = pickFreePort()
-                    if (!UnlockTestManager.start(context, targetNode, port)) {
-                        throw IllegalStateException("启动节点测速代理失败")
+                    val activeVpnPort = BoxVpnService.getInternalSocksPort()
+                    val currentVpnProxyPort = activeVpnPort?.takeIf {
+                        ServiceManager.currentNode.value?.id == targetNode.id
                     }
-                    sessionStarted = true
+                    val port = currentVpnProxyPort ?: run {
+                        pickFreePort().also { temporaryPort ->
+                            if (!UnlockTestManager.start(context, targetNode, temporaryPort)) {
+                                throw IllegalStateException("启动节点测速代理失败")
+                            }
+                            sessionStarted = true
+                        }
+                    }
                     SpeedTestService(
                         downloadTimeoutMs = downloadTimeoutMs,
                         proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", port))
